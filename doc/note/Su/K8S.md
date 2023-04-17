@@ -635,14 +635,363 @@ spec:
 
 **TODO：https服务访问**
 
+### K8S存储
+
+##### K8S存储机制
+
+K8S的存储主要是为了解决**有状态服务**的问题（如MySQL），将数据持久化，维护服务的状态。（同时也可以通过存储机制，将一些外部配置注入到Pod内部，从而实现灵活的部署）
+
+##### Config Map
+
+Config Map的提供了一种灵活地向容器中**注入配置信息**的机制。（类似与生产环境中的**配置文件注册中心**，统一管理配置文件，并分配给对应的服务）
+
+Config Map是一种K8S集群中的资源，不是一个运行的实例，可以由Pod在资源清单中引入，从而达成注入Pod的目的。
+
+**Config Map的创建**
+
+可以通过目录、文件与字面值的方式，如下：
+
+```bash
+# 目录创建 --from-file=
+$ kubectl create config-map config-map-name --from-file=/doc/file
+# 目录创建出config-map后，config-map中会存在若干对key:value，key为文件名，value为文件内容
+
+# 文件创建 --from-file=
+$ kubectl create config-map config-map-name --from-file=/doc/file/my.properties
+# 文件创建出config-map后，config-map中会存在若干对key:value，key为文件名，value为文件内容
+
+# 字面值创建 --from-literal=key=value
+$ kubectl create config-map config-map-name --from-literal=key1=value --from-literal=key2=value2
+# 字面值创建出config-map后，key:value均为指定的内容
+```
+
+**Config Map的使用 - 注入Docker**
+
+首先创建一个Config Map
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: env-config
+  namespace: default
+data:
+  log_level: INFO		# key=log_level，value=INFO
+```
+
+创建Pod，并将`env-config`注入到其中作为环境变量（注：这里的注入应该是注入到一个docker中，因为docker是一个运行实体，具有一个完整的虚拟出的操作系统，而Pod只是将若干个docker绑定起来，并没有创建出一个新的操作系统）
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+spec:
+  containers:
+  - name: test-container
+    image: xxx
+    command: ["/bin/sh", "-c", "env"]
+    env:
+      - name: LOG_FROM_CONFIG			# 注入一个LOG_FROM_CONFIG的环境变量
+        valueFrom: 
+          configMapKeyRef:
+            name: env-config
+            key: log_level
+    envFrom:
+      - configMapRef:
+          name: env-config				# 注入一个log_level的环境变量
+```
+
+**Config Map的使用 - 加载为共享卷**
+
+在数据卷中使用Config Map，将其作为文件填入Pod的共享卷（注：这里的单位是Pod而不是Docker，因为一个Pod中的docker共享网络栈和存储卷），key为文件名，value为文件内容。
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+spec:
+  volumes:
+    - name: config-volume
+      configMap:
+        name: env-config		# 从config Map创建pod的共享卷
+  containers:
+  - name: test-container
+    image: xxx
+    command: ["/bin/sh", "-c", "cat /etc/config/log_level"]
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/config	# 将pod的共享卷挂在到docker的/etc/config下
+```
+
+该Pod根据Config Map创建一个共享卷`config-volume`，并在第一个容器`test-container`中，将`config-volume`挂载到`/etc/config`目录下，即在`/etc/config`下创建出了若干配置文件，文件名为Config Map的key，文件内容为value。
+
+另外，Config Map可以结合Deployment实现Pod的热更新（直接修改Config Map的内容），但这只是将文件内容热更新，若服务对应服务不重新加载文件内容，则无法实现服务的滚动更新。
+
+##### Secret
+
+对加密信息通过密文保存，Secret同样是一种K8S资源，与Pod是否启动无关。当一个Secret创建完成后，Pod可以通过Secret加载配置信息。
+
+##### Volume
+
+Pod共享存储卷
+
+##### PV与PVC
+
+持久卷构建
+
+### K8S集群调度
+
+Scheduler组件是K8S的调度器，主要任务是把定义的Pod分配到集群对应的Node上，需要考虑以下问题：
+
+- 公平：保证每个Node都被分配资源
+- 资源高效利用：集群资源被最大化利用
+- 效率：调度效率较快
+- 灵活：允许自定义调度逻辑
+
+##### K8S调度机制
+
+K8S的调度机制由scheduler组件实现，scheduler作为一个单独的进程运行在Master结点上。进程启动后会始终监听API Server组件（K8S集群请求的入口），当需要创建Pod时，Scheduler获取并管理资源清单中声明`spec.NodeName`为空的Pod（该项为空，说明Pod未固定运行的结点，需要由Scheduler进行调度，将其分配到Node上），Scheduler会给每个Pod创建一个binding（binding是指什么还没有弄清楚），这个binding会表明Pod运行在了哪个物理机Node上。
+
+Scheduler的调度过程：首先是预选（predicate），过滤掉不满足Pod指定条件的Node（如后面要提到的策略中的Node亲和性、污点等等）；其次是优选（priority），从符合条件（可以在该Node上运行该Pod）的Node中筛选出最优的；最后Scheduler会得到优先级最高的Node，在该Node上运行Pod（结合之前的K8S集群结构，这里在Node上创建Pod的过程应该是：Scheduler得到要创建Pod的Node，将该信息发给API Server，由API Server操作并写入etcd；接着待创建Pod的Node上运行的kubelet进程，会监听到etcd中的请求，真正控制在Node创建对应的Pod）。
+
+注：调度是在Pod注册到K8S集群中之后（即集群开始管理该Pod）才开始的，因此若在预选过程中，不存在满足要求的Node，则Pod会被创建出来，但一致处于Pending状态，不被真正投入运行。
+
+##### K8S调度策略
+
+K8S的调度分为预选和优选两个过程，两个过程中均有一系列算法策略可供使用。
+
+**预选**
+
+- `PodFitsResources`：结点资源是否满足Pod需求；
+- `PodFitsHost`：如果结点指定了NodeName，检查结点名称与NodeName是否匹配；
+- `PodSelectorMatches`：过滤掉和Pod指定label标签不匹配的结点；
+- ……
+
+**优选**
+
+- `LeastRequestedPriority`：通过计算CPU和Memory的使用率决定权重，使用率约低权重越高；
+- `BalancedResourceAllocation`：节点上CPU和Memory使用率越接近，权重越高；
+- `ImageLocalityPriority`：倾向于已经存在待使用镜像的结点
+- ……
+
+##### 节点亲和性
+
+首先明确，包括节点亲和性在内的以下几种算法均是**调度策略**，用来指定调度的参数。
+
+在调度层面上，节点亲和性是指Pod与某些满足特定条件的Node更亲和（因为调度的最终目的是将Pod分配到Node上，节点亲和性也是指定Pod与Node之间的亲和性，Pod会倾向于分配到亲和性更高的Node上），节点亲和性主要是为了解决这种问题。
+
+另外一点就是，节点亲和性中的节点，是指在**一个指定的拓扑域中一致的节点**，并不一定是同一台物理机。解释一下就是，当指定Pod亲和的Node时，会指定Node的参数，当指定为`hostname=xxx`时就代表只会分配到物理机名字为`xxx`的Node上，即是指定了要分配的物理机；当指定为`dist=xxx`时就代表只会分配到带有`disk=xxx`标签的物理机，这并不要求一定是同一台物理机。
+
+节点亲和性有软策略有硬策略，前者是preferred，在指定的亲和性不满足时，会分配到其他Node上；后者是required，亲和性不满足时，会处于Pending状态。硬策略示例：
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: affinity
+  labels:
+    app: node-affinity-pod
+spec:
+  containers:
+  - name: with-node-affinity
+    image: xxx
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubenetes.io/hostname
+            values:
+            - k8s-node02
+            operator: NotIn
+```
+
+该Pod声明了一个Node亲和硬策略为：不分配到`kubenetes.io/hostname = k8s-node02`的节点上，若该集群只有这一台工作节点的话，Pod会一直处于Pending状态。
+
+软策略示例：
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: affinity
+  labels:
+    app: node-affinity-pod
+spec:
+  containers:
+  - name: with-node-affinity
+    image: xxx
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 1
+        perference:
+          matchExpressions:
+          - key: source
+            values:
+            - qikaiak
+            operator: In
+```
+
+与上面硬策略基本一致，**尽量**分配到`source=qikaiak`的节点上。
+
+上述全部为Node的亲和性，之间指定Pod与物理机Node之间的条件关系。在这之外还存在Pod亲和性，指定Pod与其他Pod之间的亲和性（实质上还是与物理机Node的亲和性，只不过可以理解为这次的`matchExpressions`从物理机本身的特点变成了物理机上运行了满足特定条件的Pod），同样分为软策略和硬策略。示例：
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-3
+  labels:
+    app: pod-3
+spec:
+  containers:
+  - name: pod-3
+    image: xxx
+  affinity:
+    podAffinity:
+      requiredDuringSchdulingIngoredDuringExecution:
+      - labelSelector:
+          matchExpression:
+          - key: app
+            operator: In
+            values:
+            - pod-1
+        topologyKey: kubernetes.io/hostname
+```
+
+该Pod指定了一条调度亲和性硬策略：分配到的Node上要有打着标签`app = pod-1`的Pod，这里的Node的判断标签是`kubernetes.io/hostname`。换句话说，只要该Pod与另一个`app=pod-1`的Pod所在的两条物理机的`kubernetes.io/hostname`一致即可（在这个实例中其实就是要求在同一台物理机上）。
+
+##### 污点与容忍
+
+污点（Taint）同样是一种**调度策略**，它是隶属于物理机Node的特性，该特性排斥一部分Pod运行在Node上，只有Pod在创建时指明可以容忍（toleration）该污点，Pod才可以被调度到这台物理机上。
+
+一个使用实例：K8S集群的Master节点会被默认设置一个污点，从而保证一般的Pod不会分配到Master节点上运行。
+
+**污点（Taint）**
+
+使用`kubectl taint`可以在Node上添加污点，每个污点的组成如下：
+
+```tex
+key=value:effect
+```
+
+effect表示该污点的具体作用，包括如下三种：
+
+- `NoSchedule`：表示K8S不会将Pod调度到具有该污点的Node上；
+- `PreferNoSchedule`：尽量避免调度；
+- `NoExecute`：表示K8S不会将Pod调度到具有该污点的Node上，且会**将Node上已存在的Pod驱逐出去**；（该点可以利用在某台物理机需要停机时使用，先将Pod全部驱逐出去，然后再停机。被Pod控制器控制的Pod会再被创建到其他Node上，不会影响服务）
+
+**容忍（Toleration）**
+
+设置了污点的Node将会与Pod产生排斥作用，Pod在一定程度上不会被调度到该节点，但可以通过设置容忍的方式允许这种调度。
+
+**pod.spec.tolerations**
+
+```yaml
+tolerations:
+- key: "key1"
+  value: "value1"
+  effect: "NoSchedule"
+  operator: "Equal"
+  tolerationSeconds: 3600
+- key: "key1"
+  value: "value1"
+  effect: "NoExecute"
+  operator: "Equal"
+- key: "key2"
+  effect: "NoSchedule"
+  operator: "Exists"
+```
+
+其中，key，value，effect要与Node上的taint一致（Equal），这样才会成功分配到对应的Node上；opeator指定的是容忍的taint与节点上的taint之间的对比操作，operator为Exists时会忽略value值。
+
+另外，若一个Node上有多个taint，只有当多个taint都被容忍时才会调度Pod到该结点上。
+
+##### 固定节点调度
+
+指定结点调度会忽略Scheduler的其他调度策略（但同样还会由Scheduler参与管理）。
+
+**Node Name**
+
+使用`pod.spec.nodeName`将Pod强制调度到指定的Node节点上：
+
+```yaml
+apiVersion: v1
+kind: Deployment
+metadata:
+  name: my-deployment
+spec:
+  replicas: 7
+  template:
+    metadata:
+      name: myapp
+      labels:
+        app: my-app
+    spec:
+      nodeName: k8s-node01
+      containers:
+      - name: my-container
+        image: xxx
+        ports:
+        - containerPort: 80
+```
+
+该Pod指定了分配到的Node需要满足`nodeName = k8s-node01`。
+
+**Node Selector**
+
+使用`pod.spec.nodeSelector`将Pod强制调度到指定标签的Node上：
+
+```yaml
+apiVersion: v1
+kind: Deployment
+metadata:
+  name: my-deployment
+spec:
+  replicas: 7
+  template:
+    metadata:
+      name: myapp
+      labels:
+        app: my-app
+    spec:
+      nodeSelector:
+        type: my-node
+      containers:
+      - name: my-container
+        image: xxx
+        ports:
+        - containerPort: 80
+```
+
+该Pod指定了分配到的Node节点需要打有`type=my-node`的标签。
+
+### K8S集群安全
+
+##### K8S安全管理机制
+
+##### 认证
+
+##### 鉴权
+
+##### 准入控制
+
+### Helm及其他功能性组件
+
+K8S集群中的一切资源都可以由`yaml`文件以资源清单的格式创建与管理，一个完备的`yaml`文件即可完成一个K8S集群的部署。
+
+但这个过程是较为复杂的，而Helm的存在就解决了复杂的管理问题。Helm的角色定位有点类似Linux系统中的yum与apt这种包管理工具。
 
 
 
-
-
+### 高可用K8S集群构建
 
 
 
 ### 其他理解
 
 kubectl：通过对Master结点（一台服务器，专门管理k8s的集群信息和接收指令）的操作（这里由API Server组件接收指令），会执行对应的操作，比如说创建Pod或Service，Master结点会处理创建Pod的指令，在管理的Node结点中创建一个指定的Pod（如通过yaml文件格式设置），这一切是在Master主机上进行，Pod的信息也只在Master节点上可读。创建完成后，某一个Node上会成功运行起来一个指定的Pod，并按照对应的设置提供服务。（这里的操作**体现了K8S对容器集群的管理**，我不需要去管理node结点的信息，而是通过Master结点去操作管理Pod的运行和更新等）
+
