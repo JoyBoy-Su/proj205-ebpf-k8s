@@ -1242,19 +1242,366 @@ LIBBPF_API struct bpf_link* bpf_program__attach(const struct bpf_program *prog);
 
 以上是libbpf对user态程序编写支持的简单介绍，经过该部分，我们已经理解了怎样把一个外部的BPF ELF文件引入内部并加载到内核的基本逻辑，清楚了`*_kern.c`与`*_user.c`从单个文件中分离开来的过程。
 
-#### kernel
+#### bpf-helpers
 
+在介绍libbpf对kernel程序的简化支持前先简单说一下bpf-helpers。
 
+首先，什么是bpf-helpers？
 
-首先什么是bpf-helpers？bpf-helpers是由`libbpf`库提供的一系列辅助函数，用来便捷地书写eBPF程序。同时helpers也为eBPF提供了受限的内核接口，一方面该接口是受限的，一个eBPF程序有它能够调用的helpers集合，是全部helpers的一个子集，保证了安全性；另一方面该接口封装了内核结构，使eBPF可以不受内核版本影响而实现同样的功能。
+bpf-helpers是一组**由libbpf提供**的便于进行系统调用的辅助接口，用来便捷地书写eBPF程序。同时helpers也为eBPF提供了**受限**的**内核接口**，一方面该接口是受限的，一个eBPF程序有它能够调用的helpers集合，是全部helpers的一个子集，保证了安全性；另一方面该接口封装了内核结构，使eBPF可以不受内核版本影响而实现同样的功能。
 
 > [man page](https://man7.org/linux/man-pages/man7/bpf-helpers.7.html#top_of_page)对于bpf-helpers的说明：
 >
 > The extended Berkeley Packet Filter (eBPF) subsystem consists in programs written in a pseudo-assembly language, then attached to one of the several kernel hooks and run in reaction of specific events. This framework differs from the older, "classic" BPF (or "cBPF") in several aspects, one of them being the ability to call special functions (or "helpers") from within a program.  These functions are restricted to a white-list of helpers defined in the kernel.
 
+ bpf-helpers使得 BPF 能够通过一组**内核定义的稳定且安全的函数调用**来从内核中查询数据，或者将数据推送到内核。随着内核的更新，bpf-helpers函数也在逐渐增多，我们可以通过[bpf-helpers(7) — Linux manual page](https://man7.org/linux/man-pages/man7/bpf-helpers.7.html#top_of_page)来查找当前版本对应都有哪些helpers函数。
+
+对应到源码，这一系列的bpf-helpers被定义在头文件`<bpf/_helper_defs.h>`中（下载下来的linux源码对应目录下中没有这个我呢见，查`/usr/include/bpf`下有这个文件，这个可能涉及到linux源码的编译，不懂……），并被头文件`<bpf/bpf_helpers.h>`引用中，该头文件需要安装libbpf后才有。部分helpers函数声明如下：
+
+```c
+/*
+ * bpf_map_lookup_elem
+ *
+ * 	Perform a lookup in *map* for an entry associated to *key*.
+ *
+ * Returns
+ * 	Map value associated to *key*, or **NULL** if no entry was
+ * 	found.
+ */
+static void *(*bpf_map_lookup_elem)(void *map, const void *key) = (void *) 1;
+
+/*
+ * bpf_map_update_elem
+ *
+ * 	Add or update the value of the entry associated to *key* in
+ * 	*map* with *value*. *flags* is one of:
+ *
+ * 	**BPF_NOEXIST**
+ * 		The entry for *key* must not exist in the map.
+ * 	**BPF_EXIST**
+ * 		The entry for *key* must already exist in the map.
+ * 	**BPF_ANY**
+ * 		No condition on the existence of the entry for *key*.
+ *
+ * 	Flag value **BPF_NOEXIST** cannot be used for maps of types
+ * 	**BPF_MAP_TYPE_ARRAY** or **BPF_MAP_TYPE_PERCPU_ARRAY**  (all
+ * 	elements always exist), the helper would return an error.
+ *
+ * Returns
+ * 	0 on success, or a negative error in case of failure.
+ */
+static long (*bpf_map_update_elem)(void *map, const void *key, const void *value, __u64 flags) = (void *) 2;
+
+/*
+ * bpf_map_delete_elem
+ *
+ * 	Delete entry with *key* from *map*.
+ *
+ * Returns
+ * 	0 on success, or a negative error in case of failure.
+ */
+static long (*bpf_map_delete_elem)(void *map, const void *key) = (void *) 3;
+
+/*
+ * bpf_ktime_get_ns
+ *
+ * 	Return the time elapsed since system boot, in nanoseconds.
+ * 	Does not include time the system was suspended.
+ * 	See: **clock_gettime**\ (**CLOCK_MONOTONIC**)
+ *
+ * Returns
+ * 	Current *ktime*.
+ */
+static __u64 (*bpf_ktime_get_ns)(void) = (void *) 5;
+
+/*
+ * bpf_trace_printk
+ *
+ * 	This helper is a "printk()-like" facility for debugging. It
+ * 	prints a message defined by format *fmt* (of size *fmt_size*)
+ * 	to file *\/sys/kernel/debug/tracing/trace* from DebugFS, if
+ * 	available. It can take up to three additional **u64**
+ * 	arguments (as an eBPF helpers, the total number of arguments is
+ * 	limited to five).
+ *
+ * 	Each time the helper is called, it appends a line to the trace.
+ * 	Lines are discarded while *\/sys/kernel/debug/tracing/trace* is
+ * 	open, use *\/sys/kernel/debug/tracing/trace_pipe* to avoid this.
+ * 	The format of the trace is customizable, and the exact output
+ * 	one will get depends on the options set in
+ * 	*\/sys/kernel/debug/tracing/trace_options* (see also the
+ * 	*README* file under the same directory). However, it usually
+ * 	defaults to something like:
+ *
+ * 	::
+ *
+ * 		telnet-470   [001] .N.. 419421.045894: 0x00000001: <formatted msg>
+ *
+ * 	In the above:
+ *
+ * 		* ``telnet`` is the name of the current task.
+ * 		* ``470`` is the PID of the current task.
+ * 		* ``001`` is the CPU number on which the task is
+ * 		  running.
+ * 		* In ``.N..``, each character refers to a set of
+ * 		  options (whether irqs are enabled, scheduling
+ * 		  options, whether hard/softirqs are running, level of
+ * 		  preempt_disabled respectively). **N** means that
+ * 		  **TIF_NEED_RESCHED** and **PREEMPT_NEED_RESCHED**
+ * 		  are set.
+ * 		* ``419421.045894`` is a timestamp.
+ * 		* ``0x00000001`` is a fake value used by BPF for the
+ * 		  instruction pointer register.
+ * 		* ``<formatted msg>`` is the message formatted with
+ * 		  *fmt*.
+ *
+ * 	The conversion specifiers supported by *fmt* are similar, but
+ * 	more limited than for printk(). They are **%d**, **%i**,
+ * 	**%u**, **%x**, **%ld**, **%li**, **%lu**, **%lx**, **%lld**,
+ * 	**%lli**, **%llu**, **%llx**, **%p**, **%s**. No modifier (size
+ * 	of field, padding with zeroes, etc.) is available, and the
+ * 	helper will return **-EINVAL** (but print nothing) if it
+ * 	encounters an unknown specifier.
+ *
+ * 	Also, note that **bpf_trace_printk**\ () is slow, and should
+ * 	only be used for debugging purposes. For this reason, a notice
+ * 	block (spanning several lines) is printed to kernel logs and
+ * 	states that the helper should not be used "for production use"
+ * 	the first time this helper is used (or more precisely, when
+ * 	**trace_printk**\ () buffers are allocated). For passing values
+ * 	to user space, perf events should be preferred.
+ *
+ * Returns
+ * 	The number of bytes written to the buffer, or a negative error
+ * 	in case of failure.
+ */
+static long (*bpf_trace_printk)(const char *fmt, __u32 fmt_size, ...) = (void *) 6;
+```
+
+这些函数虽然看着和上面libbpf封装的操作map的操作很像，但仔细看可以发现参数表不同，一般上面封装的函数用在user，而bpf-helpers用在kernel。
+
+bpf-helpers函数可以方便地被verification校验是否超越本type程序的执行范围，这一步通过`struct bpf_func_proto`完成，它存放了**校验器必需知道的所有关于该辅助函数的信息**，因此verification可以确保helpers只被允许调用的eBPF程序调用。
+
+注：另外根据查看源码，`linux6.0/kernel/bpf/helpers.c`文件下有几个类似的用宏`BPF_CALL_0~5`定义的一系列函数，但这个并不是对外暴露的bpf-helpers函数，应该只是由系统内部使用的吧（瞎胡说，反正这个文件下的函数没办法include，也就没办法调用，真要在代码中调用helpers还得是`#include <bpf/bpf_helpers.h>`）。
+
+#### kernel
+
+由上面的过程，我们已经到了分离kernel与user的方式书写eBPF代码，那么kernel代码怎么书写？kernel的代码并不是像用户代码一样有一个main函数，启动时会作为一个新的进程执行，而是一些静态的代码被系统调用。因此它和用户进程编写略有不同。
+
+我们在上面的分析中知道，`bpf_program`代表了一个eBPF ELF的一个section，`bpf_object`代表了一个eBPF ELF文件。结合这个思路，我们在编写kernel代码时应该要明确它所在的section，以供创建`bpf_program`时使用。为了方便这个操作，libbpf为我们定义了一个方便使用的宏`SEC(name)`，以后会经常用到它：
+
+```c
+/*
+ * Helper macro to place programs, maps, license in
+ * different sections in elf_bpf file. Section names
+ * are interpreted by libbpf depending on the context (BPF programs, BPF maps,
+ * extern variables, etc).
+ * To allow use of SEC() with externs (e.g., for extern .maps declarations),
+ * make sure __attribute__((unused)) doesn't trigger compilation warning.
+ */
+#define SEC(name) \
+	_Pragma("GCC diagnostic push")					    \
+	_Pragma("GCC diagnostic ignored \"-Wignored-attributes\"")	    \
+	__attribute__((section(name), used))				    \
+	_Pragma("GCC diagnostic pop")					    \
+```
+
+该宏是一个语法糖，它通过`__attribute__()`将后面的设置在了指定的section中。至于这个宏导致生成的ELF怎样被加载到内核中，怎样被挂在到内核的钩子（hook）上，这些细节暂且忽略。我们只需要知道，通过`SEC()`宏，我们可以将指定的kernel程序（一般包含好多个section，即好多个挂载代码）加载到内核中。再结合上面提到的bpf-helpers，已经基本可以完成kernel eBPF程序的编写了。
+
+#### libbpf的使用
+
+到目前为止，我们通过了解libbpf中的一些结构体和接口，清楚了libbpf为我们提供了一系列方便的函数供我们完成功能，同时它也帮助我们把eBPF的内核字节码和用户进程的开发分离，`*_user.c`专注于加载kernel代码并完成用户态的功能，`*_kern.c`专注于内核态的功能实现，便捷了eBPF的开发过程。
+
+下面使用一个用libbpf库开发eBPF的示例代码，这里就不自己编写，而是采用`linux6.0/samples/bpf`下的`tracex4_user.c`和`tracex4_kern.c`做分析：
+
+`tracex4_kern.c`，各行分析见注释：
+
+```c
+/* Copyright (c) 2015 PLUMgrid, http://plumgrid.com
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of version 2 of the GNU General Public
+ * License as published by the Free Software Foundation.
+ */
+#include <linux/ptrace.h>
+#include <linux/version.h>
+#include <linux/bpf.h>
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h>
+
+struct pair {
+	u64 val;
+	u64 ip;
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, long);
+	__type(value, struct pair);
+	__uint(max_entries, 1000000);
+} my_map SEC(".maps");				/* 通过SEC(".map")创建一个map用来存取数据 */
+
+/* kprobe is NOT a stable ABI. If kernel internals change this bpf+kprobe
+ * example will no longer be meaningful
+ */
+SEC("kprobe/kmem_cache_free")		/* 进入kmem_cache_free时的探针 */
+int bpf_prog1(struct pt_regs *ctx)
+{
+    /* 声明在<bpf/bpf_tracing.h> #define PT_REGS_PARM2(x) ((x)->si) */
+	long ptr = PT_REGS_PARM2(ctx);
+	
+    /* bpf-helpers，删除map中ptr这个键 */
+	bpf_map_delete_elem(&my_map, &ptr);
+	return 0;
+}
+
+SEC("kretprobe/kmem_cache_alloc_node")
+int bpf_prog2(struct pt_regs *ctx)
+{
+    /* 声明在<bpf/bpf_tracing.h> #define PT_REGS_RC(x) ((x)->ax) */
+	long ptr = PT_REGS_RC(ctx);
+	long ip = 0;
+
+	/**
+	 * 声明在<bpf/bpf_tracing.h>
+	 * #define BPF_KRETPROBE_READ_RET_IP ({ (ip) = (ctx)->link; })
+	 * 获得kmem_cache_alloc_node调用者的ip 
+	 */
+	BPF_KRETPROBE_READ_RET_IP(ip, ctx);
+
+	struct pair v = {
+		.val = bpf_ktime_get_ns(),	/* bpf-helpers，获取系统启动以来的时间 */
+		.ip = ip,
+	};
+	
+    /* bpf-helpers，更新map中ptr这个键的值为v */
+	bpf_map_update_elem(&my_map, &ptr, &v, BPF_ANY);
+	return 0;
+}
+
+/* 设置eBPF的license和version */
+char _license[] SEC("license") = "GPL";
+u32 _version SEC("version") = LINUX_VERSION_CODE;
+```
+
+`tracex4_user.c`，各行分析见注释：
+
+```c
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright (c) 2015 PLUMgrid, http://plumgrid.com
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <unistd.h>
+#include <stdbool.h>
+#include <string.h>
+#include <time.h>
+
+#include <bpf/bpf.h>			/* 一些对bpf syscall的封装 */
+#include <bpf/libbpf.h>			/* 一些bpf_progam和bpf_object相关的函数 */
+
+struct pair {
+	long long val;
+	__u64 ip;
+};
+
+/* 获得当前时钟的毫秒值 */
+static __u64 time_get_ns(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1000000000ull + ts.tv_nsec;
+}
+
+/* 输出fd对应的map中存储的数据 */
+static void print_old_objects(int fd)
+{
+	long long val = time_get_ns();
+	__u64 key, next_key;
+	struct pair v;
+
+	key = write(1, "\e[1;1H\e[2J", 11); /* clear screen */
+
+	key = -1;
+    /* bpf_map_get_next_key()声明在<bpf/bpf.h>，封装了bpf(BPF_MAP_GET_NEXT_KEY) */
+	while (bpf_map_get_next_key(fd, &key, &next_key) == 0) {
+        /* 同样声明在<bpf/bpf.h> ，获取查询值 */
+		bpf_map_lookup_elem(fd, &next_key, &v);
+		key = next_key;
+		if (val - v.val < 1000000000ll)
+			/* object was allocated more then 1 sec ago */
+			continue;
+		printf("obj 0x%llx is %2lldsec old was allocated at ip %llx\n",
+		       next_key, (val - v.val) / 1000000000ll, v.ip);
+	}
+}
+
+int main(int ac, char **argv)
+{
+	struct bpf_link *links[2];
+	struct bpf_program *prog;
+	struct bpf_object *obj;
+	char filename[256];
+	int map_fd, i, j = 0;
+
+	snprintf(filename, sizeof(filename), "%s_kern.o", argv[0]);
+    
+    /* bpf_object__open_file()声明在<bpf/libbpf.h> */
+	obj = bpf_object__open_file(filename, NULL);
+	if (libbpf_get_error(obj)) {
+		fprintf(stderr, "ERROR: opening BPF object file failed\n");
+		return 0;
+	}
+
+	/* load BPF program */
+	if (bpf_object__load(obj)) {
+		fprintf(stderr, "ERROR: loading BPF object file failed\n");
+		goto cleanup;
+	}
+	
+    /* 根据map的名字查询fd，这里的map名字是由tracex4_kern.c中my_map SEC(".map")处设置的 */
+	map_fd = bpf_object__find_map_fd_by_name(obj, "my_map");
+	if (map_fd < 0) {
+		fprintf(stderr, "ERROR: finding a map in obj file failed\n");
+		goto cleanup;
+	}
+	
+    /* 循环每一个bpf_program，其实就是循环SEC("kprobe")和SEC("kretprobe") */
+	bpf_object__for_each_program(prog, obj) {
+		links[j] = bpf_program__attach(prog);	/* attach eBPF的程序 */
+		if (libbpf_get_error(links[j])) {
+			fprintf(stderr, "ERROR: bpf_program__attach failed\n");
+			links[j] = NULL;
+			goto cleanup;
+		}
+		j++;
+	}
+	
+    /* 每秒输出map的内容 */
+	for (i = 0; ; i++) {
+		print_old_objects(map_fd);
+		sleep(1);
+	}
+
+cleanup:
+	for (j--; j >= 0; j--)
+		bpf_link__destroy(links[j]);
+
+	bpf_object__close(obj);
+	return 0;
+}
+```
 
 
 
+### 各个头文件提供的接口总结
+
+- `<linux/bpf.h>`
+- `<bpf/bpf.h>`
+- `<bpf/libbpf.h>`
+- `<bpf/bpf_helpers.h>`
 
 
 
@@ -1268,7 +1615,7 @@ LIBBPF_API struct bpf_link* bpf_program__attach(const struct bpf_program *prog);
 
 eBPF概念性介绍：[What is eBPF?](https://ebpf.io/what-is-ebpf/)、[eBPF介绍](http://kerneltravel.net/blog/2021/zxj-ebpf1/)
 
-eBPF代码实现介绍：[eBPF概述第一部分：简介](https://www.collabora.com/news-and-blog/blog/2019/04/05/an-ebpf-overview-part-1-introduction/)、[eBPF概述第二部分：机器和字节码](https://www.collabora.com/news-and-blog/blog/2019/04/15/an-ebpf-overview-part-2-machine-and-bytecode/)、[XDP和eBPF简介](https://blogs.igalia.com/dpino/2019/01/07/introduction-to-xdp-and-ebpf/)、[BPF之路一bpf系统调用](https://www.anquanke.com/post/id/263803)
+eBPF代码实现介绍：[eBPF概述第一部分：简介](https://www.collabora.com/news-and-blog/blog/2019/04/05/an-ebpf-overview-part-1-introduction/)、[eBPF概述第二部分：机器和字节码](https://www.collabora.com/news-and-blog/blog/2019/04/15/an-ebpf-overview-part-2-machine-and-bytecode/)、[XDP和eBPF简介](https://blogs.igalia.com/dpino/2019/01/07/introduction-to-xdp-and-ebpf/)、[BPF之路一bpf系统调用](https://www.anquanke.com/post/id/263803)、[eBPF Map 操作](https://houmin.cc/posts/98a3c8ff/#more)、[Introduction to eBPF](https://houmin.cc/posts/2c811c2c/#more)；
 
 eBPF开发参考项目：[官方入门Lab](https://play.instruqt.com/embed/isovalent/tracks/ebpf-getting-started?token=em_9nxLzhlV41gb3rKM&show_challenges=true)、[awesome-ebpf](https://github.com/zoidbergwill/awesome-ebpf)、[bpf-developer-tutorial](https://github.com/eunomia-bpf/bpf-developer-tutorial)、[libbpf-bootstrap](https://github.com/libbpf/libbpf-bootstrap)、[bcc](https://github.com/iovisor/bcc)（该项目主要关注其中的文档：[tutorial_bcc_python_developer.md](https://github.com/iovisor/bcc/blob/master/docs/tutorial_bcc_python_developer.md)）
 
