@@ -84,7 +84,7 @@ struct bpf_insn bpf_prog[] = {
 
 ## 二、eBPF程序接口
 
-不管是原生的eBPF程序还是借助其他库书写的eBPF程序，在组成上都有三个部分：内核态功能实现（做一些内核函数的调用处理等等）、用户态功能实现（在用户态利用内核态数据）、将内核态功能代码（即eBPF字节码）挂载到内核上。一般eBPF程序（kernel）都是被用户进程（user）加载，并在用户进程退出时自动卸载。
+不管是原生的eBPF程序还是借助其他库书写的eBPF程序，在组成上都有三个部分：内核态功能实现（做一些内核函数的调用处理等等）、用户态功能实现（在用户态利用内核态数据）、将内核态功能代码（即eBPF字节码）挂载到内核上。一般eBPF程序（kernel）都是被用户进程（user）加载，并在**用户进程退出时自动卸载**。
 
 ### bpf-map
 
@@ -103,7 +103,7 @@ unsigned int value_size;		/* map存取数据的key的大小，字节为单位 */
 unsigned int max_entries;		/* map中最多存取的数据项个数 */
 ```
 
-以上四个对象在创建map时需要指定，创建完成后便可以根据map的key和value大小存取对应数据。`key_size`、`value_size`和`max_entries`很清楚，type是指定了map的类型，在Linux源码（`linux6.0/include/uapi/bpf.h`，其余很多结构体和枚举类的定义也是在该文件下）中type有如下取值：
+以上四个对象在创建map时需要指定，创建完成后便可以根据map的key和value大小存取对应数据。`key_size`、`value_size`和`max_entries`很清楚，type是指定了map的类型，在Linux源码中type有如下取值：
 
 ```c
 enum bpf_map_type {
@@ -141,11 +141,13 @@ enum bpf_map_type {
 };
 ```
 
+> 注：源码在`linux6.0/include/uapi/linux/bpf.h`，其余很多结构体和枚举类的定义也是在该文件下。另外，在下载下的源码结构中是在这个文件下，不过实验发现在vscode下写代码时，应该include的文件是`linux/bpf.h`，文件内容和`linux6.0/include/uapi/linux/bpf.h`一致，包含相同的结构体定义，后面所有的`linux6.0/include/uapi/linux/bpf.h`文件中的定义在编写代码时都写成`#include <linux/bpf.h>`。另外就是，该文件下的定义全部是struct、union与enum的定义，并没有对应相关的bpf函数定义，这也说明原生的bpf函数只有一个系统调用入口，并没有方便的函数可供使用，后续才有了helper函数。
+
 主要了解一下第二到第四这三个：`BPF_MAP_TYPE_HASH`、`BPF_MAP_TYPE_ARRAY`与`BPF_MAP_TYPE_PROG_ARRAY`。
 
 - `BPF_MAP_TYPE_HASH`：
 - `BPF_MAP_TYPE_ARRAY`：数组映射，有如下特征：在初始化时, 所有的数组元素都被预先分配并0初始化（即array不是一个动态表）；映射的键就是数组的下标, 必须是4字节的（int的大小）。常见的用途：定义为一个全局的eBPF变量，只有一个元素, 键为0的数组，value是全局变量的集合，eBPF程序可使用这些变量保存时间的状态，聚合追踪事件到一组固定的桶中。
-- `BPF_MAP_TYPE_PROG_ARRAY`：程序数组映射，该map比较特殊，其映射的value只包含引用其他eBPF程序的文件描述符（即key是int大小的数组下标，value是int大小的文件描述符，因此`key_size`和`value_size`都是4）。在这个map中进行查找时, 程序执行流会被就地**重定位到另一个eBPF程序的开头**（即数组中存放的文件描述符对应的program）, 并且不会返回到调用程序。
+- `BPF_MAP_TYPE_PROG_ARRAY`：程序数组映射，该map比较特殊，其映射的value只包含引用其他eBPF程序的文件描述符（即key是int大小的数组下标，value是int大小的文件描述符，因此`key_size`和`value_size`都是4）。在这个map中进行查找时, 程序执行流会被就地**重定位到另一个eBPF程序的开头**（即数组中存放的文件描述符对应的program）, 并且不会返回到调用程序（这个程序跳转的过程也被称为**尾调用**过程）。
 
 以上是对map的一个简单认识，只需要直到map可以存取数据，且是全局共享，并且有不同的类型即可。后面会说对map的一系列操作。
 
@@ -157,13 +159,9 @@ enum bpf_map_type {
 int bpf(int cmd, union bpf_attr *attr, unsigned int size);
 ```
 
-> 注：原定义似乎应该是：
+> 注：在Linux下，系统调用的原生调用应该是通过`syscall()`函数的方式，指定系统调用号与参数。至于像`read()`这种是在其他头文件中对`syscall(SYS_read)`进行了封装，从而能够忽略系统调用的细节。但bpf系统调用似乎没有这个封装，因此在使用bpf系统调用时的原生方式应该是`syscall(SYS_bpf, cmd, attr, size)`。（也有可能是有这个封装但我没找到）
 >
-> ```c
-> asmlinkage long sys_bpf(int cmd, union bpf_attr *attr, unsigned int size);
-> ```
->
-> 取自`linux6.0/include/linux/syscalls.h`，这里就按上面第一个系统调用来解释。
+> （不过linux下，以read为例，用户进程具体细节的系统调用过程没有研究过，包括read()是在哪里封装的`syscall(SYS_read)`后续再查吧，现在很自然地理解到read()肯定最后是调用了`syscall(SYS_read)`就好。）
 
 解释一下各个参数：
 
@@ -431,17 +429,429 @@ bpf_map_delete_elem(map_fd, void *key); 				//在map_fd中删除一个键
 
 bpf系统调用的最后一个参数`size`，代表`attr`参数的大小。
 
-于是，通过最原生的`bpf()`系统调用，我们可以完成对map的创建和访问，对eBPF程序的加载。但这个操作是比较复杂的，需要我们了解并配置很多参数，使用起来并不友好，于是在syscall的基础上出现了一些helper函数，用来帮助我们简化对`bpf()`的使用。
+于是，通过最原生的`bpf()`系统调用，我们可以完成对map的创建和访问，对eBPF程序的加载。但这个操作是比较复杂的，需要我们了解并配置很多参数，使用起来并不友好。于是我们可以使用syscall的基础上封装的一些helper函数，用来帮助我们简化对`bpf()`的使用。
+
+### bpf-syscall程序示例
+
+以下给出几个通过原生bpf系统调用（不涉及`bpf-helper`）来实现一些eBPF基础使用，并说明各个头文件的位置与作用，如下。
+
+#### array_map的使用
+
+完整的源代码，详情见注释，建议跟着敲一遍加深印象：
+
+```c
+/**
+ * @file bpf_syscall_map_array.c
+ * @author JiadiSu (20302010043@fudan.edu.cn)
+ * @brief 通过bpf系统调用接口操作map_array
+ * @version 0.1
+ * @date 2023-04-24
+ * 
+ * @copyright Copyright (c) 2023
+ * 编译：gcc bpf_syscall_map_array.c -o bpf_syscall_map_array
+ * （原生的gcc编译说明不需要任何其他依赖）
+ * 运行环境：Ubuntu20.04（不要WSL！不要WSL！不要WSL！）
+ */
+
+#include <errno.h>
+#include <linux/bpf.h>      /* bpf相关的定义，如map type，cmd type等，和下载下的源码linux6.0/include/uapi/linux/bpf.h一致 */
+#include <stdio.h>
+#include <stdlib.h>         /* exit()函数 */
+#include <stdint.h>         /* uint64_t等type */
+#include <sys/syscall.h>    /* SYS_xxx (SYS_bpf) */
+#include <unistd.h>         /* syscall() */
+
+#define ptr_to_u64(x) ((uint64_t)x)     /* ptr -> uint64_t */
+
+/**
+ * @brief 对bpf系统调用的一个包装，一切对bpf子系统的操作都通过这个函数交互
+ * （这个封装是自定义的而不是系统的）
+ * （似乎是因为linux并没有一个像read和write这种封装好的bpf系统调用）
+ * @param cmd 
+ * @param attr 
+ * @param size 
+ * @return int 
+ */
+int bpf(enum bpf_cmd cmd, union bpf_attr* attr, unsigned int size)
+{
+    return syscall(SYS_bpf, cmd, attr, size);
+}
+
+/**
+ * @brief 对bpf(BPF_MAP_CREATE)的一个自定义封装，完成map的创建
+ * 
+ * @param map_type 
+ * @param key_size 
+ * @param value_size 
+ * @param max_entries 
+ * @return int 
+ */
+int bpf_create_map(enum bpf_map_type map_type, unsigned int key_size, unsigned int value_size, unsigned int max_entries)
+{
+    union bpf_attr attr = 
+    {
+        .map_type = map_type,
+        .key_size = key_size,
+        .value_size = value_size,
+        .max_entries = max_entries
+    };
+    
+    return bpf(BPF_MAP_CREATE, &attr, sizeof(attr));
+}
+
+/**
+ * @brief 对bpf(BPF_MAP_UPDATE_ELEM)的一个自定义封装，完成map数据的更新与创建
+ * （这里并不是bpf-helper函数，bpf-helper提供了相同功能的函数：bpf_map_update_elem）
+ * @param fd        map fd
+ * @param key       key     (const pointer)
+ * @param value     value   (const pointer)
+ * @param flags     flags   (ANY / EXIST / NOT EXIST)
+ * @return int 
+ */
+int bpf_update_elem(int fd, const void* key, const void* value, uint64_t flags) 
+{
+    union bpf_attr attr = 
+    {
+        .map_fd = fd,
+        .key = ptr_to_u64(key),
+        .value = ptr_to_u64(value),
+        .flags = flags
+    };
+
+    return bpf(BPF_MAP_UPDATE_ELEM, &attr, sizeof(attr));
+}
+
+/**
+ * @brief 对bpf(BPF_MAP_LOOKUP_ELEM)的一个自定义封装，完成对数据的查找
+ * （这里并不是bpf-helper函数，bpf-helper提供了相同功能的函数：bpf_map_lookup_elem）
+ * @param fd        map fd
+ * @param key       key     (const pointer)
+ * @param value     value   (pointer)
+ * @return int      
+ */
+int bpf_lookup_elem(int fd, const void* key, void* value)
+{
+    union bpf_attr attr = 
+    {
+        .map_fd = fd,
+        .key = ptr_to_u64(key),
+        .value = ptr_to_u64(value)
+    };
+
+    return bpf(BPF_MAP_LOOKUP_ELEM, &attr, sizeof(attr));
+}
+
+int main(int argc, char const *argv[])
+{
+    /* 创建一个map */
+    int map_fd;
+    if ((map_fd = bpf_create_map(BPF_MAP_TYPE_ARRAY, 4, 4, 0x100)) < 0)
+    {
+        perror("BPF create map error");
+        exit(-1);
+    }
+    printf("BPF map fd: %d\n", map_fd);
+
+    /* 填充map的值 */
+    for (int i = 0; i < 0x20; i++) 
+    {
+        int value = i + 1;
+        /* 因为array的map是预定义max entries个项，因此都是exist的 */
+        if (bpf_update_elem(map_fd, &i, &value, BPF_EXIST) < 0)
+        {
+            perror("BPF update create error");
+            exit(-1);
+        }
+    }
+
+    /* 查询map的值 */
+    int key, value;
+    printf("please input key to lookup:");
+    scanf("%d", &key);
+
+    if (bpf_lookup_elem(map_fd, &key, &value) < 0) 
+    {
+        perror("BPF lookup create error");
+        exit(-1);
+    }
+    printf("BPF array map: key %d => value %d\n", key, value);
+
+    exit(0);
+}
+
+```
+
+该代码运行结果：
+
+<img src="img/bpf-syscall-map-array.png" style="zoom:80%;" />
+
+关注一个点：当输入1000时，由于超过了`map.max_entries`查找失败，但关注此时的报错：No such file or directory（找不到对应的文件）。这里解释了bpf-map和文件系统的关系，后面说。
+
+#### hash_map的使用
+
+完整的源代码，详情见注释：
+
+```c
+/**
+ * @file bpf_syscall_map_hash.c
+ * @author JiadiSu (20302010043@fudan.edu.cn)
+ * @brief 通过bpf系统调用接口操作map_hash
+ * @version 0.1
+ * @date 2023-04-24
+ * 
+ * @copyright Copyright (c) 2023
+ * 编译：gcc bpf_syscall_map_hash.c -o bpf_syscall_map_hash
+ * （原生的gcc编译说明不需要任何其他依赖）
+ * 运行环境：Ubuntu20.04（不要WSL！不要WSL！不要WSL！）
+ */
+
+#include <errno.h>
+#include <linux/bpf.h>      /* bpf相关的定义，如map type，cmd type等，和下载下的源码linux6.0/include/uapi/linux/bpf.h一致 */
+#include <stdio.h>
+#include <stdlib.h>         /* exit()函数 */
+#include <stdint.h>         /* uint64_t等type */
+#include <sys/syscall.h>    /* SYS_xxx (SYS_bpf) */
+#include <unistd.h>         /* syscall() */
+
+#define ptr_to_u64(x) ((uint64_t)x)     /* ptr -> uint64_t */
+
+/**
+ * @brief 对bpf系统调用的一个包装，一切对bpf子系统的操作都通过这个函数交互
+ * （这个封装是自定义的而不是系统的）
+ * （似乎是因为linux并没有一个像read和write这种封装好的bpf系统调用）
+ * @param cmd 
+ * @param attr 
+ * @param size 
+ * @return int 
+ */
+int bpf(enum bpf_cmd cmd, union bpf_attr* attr, unsigned int size)
+{
+    return syscall(SYS_bpf, cmd, attr, size);
+}
+
+/**
+ * @brief 对bpf(BPF_MAP_CREATE)的一个自定义封装，完成map的创建
+ * 
+ * @param map_type 
+ * @param key_size 
+ * @param value_size 
+ * @param max_entries 
+ * @return int 
+ */
+int bpf_create_map(enum bpf_map_type map_type, unsigned int key_size, unsigned int value_size, unsigned int max_entries)
+{
+    union bpf_attr attr = 
+    {
+        .map_type = map_type,
+        .key_size = key_size,
+        .value_size = value_size,
+        .max_entries = max_entries
+    };
+    
+    return bpf(BPF_MAP_CREATE, &attr, sizeof(attr));
+}
+
+/**
+ * @brief 对bpf(BPF_MAP_UPDATE_ELEM)的一个自定义封装，完成map数据的更新与创建
+ * 
+ * @param fd        map fd
+ * @param key       key     (const pointer)
+ * @param value     value   (const pointer)
+ * @param flags     flags   (ANY / EXIST / NOT EXIST)
+ * @return int 
+ */
+int bpf_update_elem(int fd, const void* key, const void* value, uint64_t flags) 
+{
+    union bpf_attr attr = 
+    {
+        .map_fd = fd,
+        .key = ptr_to_u64(key),
+        .value = ptr_to_u64(value),
+        .flags = flags
+    };
+
+    return bpf(BPF_MAP_UPDATE_ELEM, &attr, sizeof(attr));
+}
+
+/**
+ * @brief 对bpf(BPF_MAP_LOOKUP_ELEM)的一个自定义封装，完成对数据的查找
+ * 
+ * @param fd        map fd
+ * @param key       key     (const pointer)
+ * @param value     value   (pointer)
+ * @return int      
+ */
+int bpf_lookup_elem(int fd, const void* key, void* value)
+{
+    union bpf_attr attr = 
+    {
+        .map_fd = fd,
+        .key = ptr_to_u64(key),
+        .value = ptr_to_u64(value)
+    };
+
+    return bpf(BPF_MAP_LOOKUP_ELEM, &attr, sizeof(attr));
+}
+
+int main(int argc, char const *argv[])
+{
+    /* 创建一个 hash map，key为int，value为char* */
+    int map_fd;
+    if ((map_fd = bpf_create_map(BPF_MAP_TYPE_ARRAY, sizeof(int), sizeof(char*), 0x100)) < 0)
+    {
+        perror("BPF create map error");
+        exit(-1);
+    }
+    printf("BPF map fd: %d\n", map_fd);
+
+    /* 填充map的值 */
+    char *strtab[] = {
+        "This",
+        "is",
+        "eBPF",
+        "hash",
+        "map",
+        "test",
+    };
+    for (int i = 0; i < 6; i++) 
+    {
+        char* value = strtab[i];
+        /* 因为array的map是预定义max entries个项，因此都是exist的 */
+        if (bpf_update_elem(map_fd, &i, &value, BPF_EXIST) < 0)
+        {
+            perror("BPF update create error");
+            exit(-1);
+        }
+    }
+
+    /* 查询map的值 */
+    int key;
+    char* value;
+    printf("please input key to lookup:");
+    scanf("%d", &key);
+
+    if (bpf_lookup_elem(map_fd, &key, &value) < 0) 
+    {
+        perror("BPF lookup create error");
+        exit(-1);
+    }
+    printf("BPF array map: key %d => value %s\n", key, value);
+
+    exit(0);
+}
+
+```
+
+与array基本一致，运行结果：
+
+<img src="img/bpf-syscall-map-hash.png" style="zoom:80%;" />
+
+#### load_bpf的使用
+
+完整的源代码如下，详情看注释：
+
+```c
+/**
+ * @file bpf_syscall_prog_load.c
+ * @author JiadiSu (20302010043@fudan.edu.cn)
+ * @brief 通过bpf系统调用接口加载bpf prog
+ * @version 0.1
+ * @date 2023-04-24
+ * 
+ * @copyright Copyright (c) 2023
+ * 编译：gcc bpf_syscall_prog_load.c -o bpf_syscall_prog_load
+ * （原生的gcc编译说明不需要任何其他依赖）
+ * 运行环境：Ubuntu20.04（不要WSL！不要WSL！不要WSL！）
+ */
+
+#include <errno.h>
+#include <linux/bpf.h>      /* bpf相关的定义，如map type，cmd type等，和下载下的源码linux6.0/include/uapi/linux/bpf.h一致 */
+#include <stdio.h>
+#include <stdlib.h>         /* exit()函数 */
+#include <stdint.h>         /* uint64_t等type */
+#include <sys/syscall.h>    /* SYS_xxx (SYS_bpf) */
+#include <unistd.h>         /* syscall() */
+
+#define ptr_to_u64(x) ((uint64_t)x)     /* ptr -> uint64_t */
+
+/**
+ * @brief 对bpf系统调用的一个包装，一切对bpf子系统的操作都通过这个函数交互
+ * （这个封装是自定义的而不是系统的）
+ * （似乎是因为linux并没有一个像read和write这种封装好的bpf系统调用）
+ * @param cmd 
+ * @param attr 
+ * @param size 
+ * @return int 
+ */
+int bpf(enum bpf_cmd cmd, union bpf_attr* attr, unsigned int size)
+{
+    return syscall(SYS_bpf, cmd, attr, size);
+}
+
+#define LOG_BUF_SIZE 0x1000
+char bpf_log_buf[LOG_BUF_SIZE];
+
+/**
+ * @brief 对bpf(BPF_PROG_LOAD)的一个自定义封装，完成bpf_prog的加载
+ * 
+ * @param type 
+ * @param insns 
+ * @param insn_cnt 
+ * @param license 
+ * @return int 
+ */
+int bpf_prog_load(enum bpf_prog_type type, const struct bpf_insn* insns, int insn_cnt, char* license)
+{
+    union bpf_attr attr = 
+    {
+        .prog_type = type,
+        .insns = ptr_to_u64(insns),
+        .insn_cnt = insn_cnt,
+        .license = ptr_to_u64(license),
+        .log_buf = ptr_to_u64(bpf_log_buf),
+        .log_level = 2,
+        .log_size = LOG_BUF_SIZE
+    };
+
+    return bpf(BPF_PROG_LOAD, &attr, sizeof(attr));
+}
+
+int main(int argc, char const *argv[])
+{
+    /* bpf prog */
+    struct bpf_insn bpf_prog[] = {
+        { 0xb7, 0, 0, 0, 0x2 },     /* mov r0, 0x2; */
+        { 0x95, 0, 0, 0, 0x0 },     /* exit; */
+    };
+
+    /* 加载prog */
+    int prog_fd;
+    if ((prog_fd = bpf_prog_load(BPF_PROG_TYPE_SOCKET_FILTER, bpf_prog, sizeof(bpf_prog) / sizeof(bpf_prog[0]), "GPL")) < 0)
+    {
+        perror("BPF prog load error");
+        exit(-1);
+    }
+    printf("BPF prog fd: %d\n", prog_fd);
+
+    /* 读取log */
+    printf("%s\n", bpf_log_buf);
+
+    exit(0);
+}
+
+```
+
+输出program信息，运行结果：
+
+<img src="img/bpf-syscall-prog-load.png" style="zoom:80%;" />
 
 ### bpf-helper
 
 
 
-### 原生eBPF
+## X、eBPF的一些原理
 
-原生的eBPF程序由一个简单的`.c`文件完成以上三个部分，通过
-
-
+### bpf-map与file system
 
 
 
@@ -454,3 +864,5 @@ eBPF代码实现介绍：[eBPF概述第一部分：简介](https://www.collabora
 eBPF开发参考项目：[官方入门Lab](https://play.instruqt.com/embed/isovalent/tracks/ebpf-getting-started?token=em_9nxLzhlV41gb3rKM&show_challenges=true)、[awesome-ebpf](https://github.com/zoidbergwill/awesome-ebpf)、[bpf-developer-tutorial](https://github.com/eunomia-bpf/bpf-developer-tutorial)、[libbpf-bootstrap](https://github.com/libbpf/libbpf-bootstrap)、[bcc](https://github.com/iovisor/bcc)（该项目主要关注其中的文档：[tutorial_bcc_python_developer.md](https://github.com/iovisor/bcc/blob/master/docs/tutorial_bcc_python_developer.md)）
 
 Linux源码：[linux kernel](https://www.kernel.org/)（看的是6.0版本）
+
+Linux man page：[bpf-helpers](https://man7.org/linux/man-pages/man7/bpf-helpers.7.html)
