@@ -33,6 +33,21 @@ eBPF提供了这两种方式之外的一种方式，将要扩展的功能用**eB
 
 首先要明确，eBPF技术其实是一个沙箱（sandbox）技术，它与Java的运行机制很相似。Java是在本机上运行了jvm（Java virtual machine，Java虚拟机），将Java的字节码文件（也就是由.java文件经过javac指令后生成的.class文件）运行在jvm上，由jvm完成与物理机的交互，从而实现了跨平台的执行。eBPF也是类似，该技术是在**内核态**运行了一个**基于eBPF指令架构的虚拟机（暂时可以简单理解为一种指令集ISA，它与本机是arm还是x86_64还是risc-v都无关）**（这个虚拟机可以类比jvm），由eBPF指令编写好的字节码程序（也就是用户想要给内核扩展的功能）会由该虚拟机**解释执行**（划重点：这里是解释执行，后面会说），从而实现功能的扩展，因为该虚拟机的存在，eBPF不需要像内核模块一样需要根据不同的Linux内核版本维护不同的版本，因此eBPF解决了内核模块存在的第一个问题。接下来是第二个问题：安全性的保证。前面提到过，eBPF对内核的扩展需要将eBPF字节码加载到内核中，在加载时内核就会有一个Verification的过程，Verification会检查该eBPF是否会对系统作出损害且可以保证运行完成（不会以死循环的方式占据系统资源），Verification保证了加载到内核的eBPF的一定是安全的（这里的检查机制我还没详细地查过，简单知道有个安全检查的过程就好）。于是eBPF的安全性也得到了保证，内核模块的第二个问题解决。
 
+可以列一下eBPF和内核模块的对比：
+
+|        维度         |            Linux 内核模块            |                      eBPF                      |
+| :-----------------: | :----------------------------------: | :--------------------------------------------: |
+| kprobes/tracepoints |                 支持                 |                      支持                      |
+|     **安全性**      |   可能引入安全漏洞或导致内核 Panic   |      通过验证器进行检查，可以保障内核安全      |
+|      内核函数       |           可以调用内核函数           |          只能通过 BPF Helper 函数调用          |
+|       编译性        |             需要编译内核             |         不需要编译内核，引入头文件即可         |
+|        运行         |           基于相同内核运行           | 基于稳定 ABI 的 BPF 程序可以编译一次，各处运行 |
+|   与应用程序交互    |            打印日志或文件            |          通过 perf_event 或 map 结构           |
+|   数据结构丰富性    |                 一般                 |                      丰富                      |
+|    **入门门槛**     |                  高                  |                       低                       |
+|      **升级**       | 需要卸载和加载，可能导致处理流程中断 |       原子替换升级，不会造成处理流程中断       |
+|      内核内置       |              视情况而定              |                  内核内置支持                  |
+
 图解：
 
 <img src="img/ebpf-proc.jpg" style="zoom:80%;" />
@@ -429,7 +444,7 @@ bpf_map_delete_elem(map_fd, void *key); 				//在map_fd中删除一个键
 
 bpf系统调用的最后一个参数`size`，代表`attr`参数的大小。
 
-于是，通过最原生的`bpf()`系统调用，我们可以完成对map的创建和访问，对eBPF程序的加载。但这个操作是比较复杂的，需要我们了解并配置很多参数，使用起来并不友好。于是我们可以使用syscall的基础上封装的一些helper函数，用来帮助我们简化对`bpf()`的使用。
+于是，通过最原生的`bpf()`系统调用，我们可以完成对map的创建和访问，对eBPF程序的加载。但这个操作是比较复杂的，需要我们了解并配置很多参数，使用起来并不友好。于是`libbpf`库在使用syscall的基础上封装了一些函数，用来帮助我们简化对`bpf()`的使用。
 
 ### bpf-syscall程序示例
 
@@ -845,7 +860,401 @@ int main(int argc, char const *argv[])
 
 <img src="img/bpf-syscall-prog-load.png" style="zoom:80%;" />
 
-### bpf-helper
+可以看到，此时为了加载一个eBPF程序，不仅需要使用原生的`bpf()`系统调用填参数，也需要自己手动设置字节码，这个过程使很不方便的。为了便于设置`struct bpf_insn`，linux系统提供了一系列的宏（头文件`<linux/filter.h>`下，源代码的目录结构`linux6.0/tools/include/linux/filter.h`），部分宏如下：
+
+```c
+#define BPF_ALU64_IMM(OP, DST, IMM)				\
+	((struct bpf_insn) {					\
+		.code  = BPF_ALU64 | BPF_OP(OP) | BPF_K,	\
+		.dst_reg = DST,					\
+		.src_reg = 0,					\
+		.off   = 0,					\
+		.imm   = IMM })
+
+#define BPF_ENDIAN(TYPE, DST, LEN)				\
+	((struct bpf_insn) {					\
+		.code  = BPF_ALU | BPF_END | BPF_SRC(TYPE),	\
+		.dst_reg = DST,					\
+		.src_reg = 0,					\
+		.off   = 0,					\
+		.imm   = LEN })
+
+#define BPF_LD_ABS(SIZE, IMM)					\
+	((struct bpf_insn) {					\
+		.code  = BPF_LD | BPF_SIZE(SIZE) | BPF_ABS,	\
+		.dst_reg = 0,					\
+		.src_reg = 0,					\
+		.off   = 0,					\
+		.imm   = IMM })
+
+#define BPF_JMP_REG(OP, DST, SRC, OFF)				\
+	((struct bpf_insn) {					\
+		.code  = BPF_JMP | BPF_OP(OP) | BPF_X,		\
+		.dst_reg = DST,					\
+		.src_reg = SRC,					\
+		.off   = OFF,					\
+		.imm   = 0 })
+```
+
+这些宏便捷了字节码的设置，可以更方便地书写`struct insn`（当然是相对方便）。
+
+补充说明：
+
+头文件`<linux/bpf.h>`下提供了很多bpf相关的结构体，以供系统完成基本的bpf调用以及bpf子系统的功能，这其中并不包括便于编程者书写程序的一些辅助函数，原生的Linux系统并不提供这些，这些是由`libbpf`库提供。
+
+**到现在为止，我们应该掌握通过`bpf()`系统调用和`struct bpf_insn`结构完成最原生的eBPF程序的加载操作与map相关的操作。**
+
+### libbpf
+
+libbpf是一个便于书写eBPF程序（包括用户态和内核态）的工具库，它封装了`bpf()`系统调用，并定义了一系列函数为eBPF程序的便捷书写提供了支持。
+
+libbpf的环境配置
+
+```bash
+# for ubuntu
+$ apt install clang llvm libelf-dev iproute2
+# test clang
+$ clang -v
+# test llvm
+$ llc --version
+# test iproute2
+$ ip link
+```
+
+libbpf其实就包括了eBPF程序中常见的头文件`<bpf/bpf_helpers.h>`、`<bpf/bpf_tracing.h>`等，在安装好libbpf后上述文件会出现在`/usr/include/bpf`下供使用。
+
+因为eBPF程序包括kernel和user两个部分，下面以两个部分说明libbpf对eBPF程序书写的支持。
+
+#### user
+
+先回顾一下之前的用户态程序怎么书写，以load一个eBPF字节码为例（已经把一些自定义封装的函数去掉了，看的清楚些）：
+
+```c
+/* bpf prog */
+struct bpf_insn bpf_prog[] = {
+    { 0xb7, 0, 0, 0, 0x2 },     /* mov r0, 0x2; */
+    { 0x95, 0, 0, 0, 0x0 },     /* exit; */
+};
+
+/* buffer */
+#define LOG_BUF_SIZE 0x1000
+char bpf_log_buf[LOG_BUF_SIZE];
+
+/* set attr */
+union bpf_attr attr = 
+{
+    .prog_type = BPF_PROG_TYPE_SOCKET_FILTER,
+    .insns = ptr_to_u64(bpf_prog),
+    .insn_cnt = sizeof(bpf_prog) / sizeof(bpf_prog[0]),
+    .license = ptr_to_u64("GPL"),
+    .log_buf = ptr_to_u64(bpf_log_buf),
+    .log_level = 2,
+    .log_size = LOG_BUF_SIZE
+};
+
+/* load */
+int prog_fd = syscall(SYS_bpf, BPF_PROG_LOAD, &attr, sizeof(attr));
+```
+
+简单理一下，关键步骤有以下几个：
+
+1. 创建eBPF字节码，即`struct bpf_insn`数组，这个数组包含了eBPF程序kernel态的功能；
+2. 设置bpf系统调用需要的参数，即`union bpf_attr`联合体，包含eBPF加载需要用到的数据；
+3. 进行`bpf()`系统调用，陷入内核完成加载；
+
+很明显这些步骤可以封装为一个方便的函数供外部调用，从而就可以省去书写复杂的调用过程。libbpf在对user的支持上就实现了这一点，它将这一系列过程封装成了一个函数`bpf_prog_load()`，定义在`linux6.0/tools/lib/bpf/bpf.h`中（实现在`.c`）：
+
+```c
+int bpf_prog_load(enum bpf_prog_type prog_type,
+		  const char *prog_name, const char *license,
+		  const struct bpf_insn *insns, size_t insn_cnt,
+		  const struct bpf_prog_load_opts *opts)
+{
+    // ...
+    sys_bpf_prog_load(&attr, sizeof(attr), attempts);
+    // ...
+}
+```
+
+该可以看到libbpf封装的这个函数与我们的上面写的参数表基本一致，完成的功能也基本一致。它最终调用了`sys_bpf_prog_load()`是一个对`bpf()`系统调用的封装：
+
+```c
+static inline int sys_bpf(enum bpf_cmd cmd, union bpf_attr *attr,
+			  unsigned int size)
+{
+	return syscall(__NR_bpf, cmd, attr, size);
+}
+
+static inline int sys_bpf_fd(enum bpf_cmd cmd, union bpf_attr *attr,
+			     unsigned int size)
+{
+	int fd = sys_bpf(cmd, attr, size);
+	return ensure_good_fd(fd);
+}
+
+static inline int sys_bpf_prog_load(union bpf_attr *attr, unsigned int size, int attempts)
+{
+	int fd;
+	do {
+		fd = sys_bpf_fd(BPF_PROG_LOAD, attr, size);
+	} while (fd < 0 && errno == EAGAIN && --attempts > 0);
+	return fd;
+}
+```
+
+于是我们可以通过libbpf提供的函数方便地在**用户空间**书写加载程序：
+
+```c
+int main(int argc, char **argv)
+{
+    if(load_bpf_file("hello_kern.o") != 0)
+    {
+        printf("The kernel didn't load BPF program\n");
+        return -1;
+    }
+
+    read_trace_pipe();
+    return 0;
+}
+```
+
+同样的，对于map的一些操作，libbpf同样封装了用户空间可用的函数，见`linux6.0/tools/lib/bpf/bpf.h`：
+
+```c
+int bpf_map_update_elem(int fd, const void *key, const void *value, __u64 flags);
+int bpf_map_lookup_elem(int fd, const void *key, void *value);
+int bpf_map_lookup_and_delete_elem(int fd, const void *key, void *value);
+int bpf_map_delete_elem(int fd, const void *key);
+int bpf_map_get_next_key(int fd, const void *key, void *next_key);
+```
+
+再回到eBPF的加载，这里我们还是使用`struct bpf_insn`数组来作为eBPF字节码，而不是通过另一个文件的形式，这导致eBPF的编写始终是困难的。我们希望可以通过高级语言编写eBPF程序，然后将其编译成eBPF字节码并加载。这个改变需要有以下两个支持：
+
+1. 存在将高级语言（如C语言）编译成eBPF字节码的编译器；
+2. 存在将eBPF字节码文件引入到编写用户空间的代码中的函数；
+3. 存在一种比`struct insn`抽象层次更高的结构体来表示eBPF程序；
+4. 存在一种以更高抽象层为参数加载eBPF程序到内核的封装函数；
+
+第一步现在已经存在了，如`clang/llvm`，我们并不关注这个编译的过程，重点关注后面三个，总结下来就是对eBPF字节码更高抽象层次的表示和使用，libbpf完成了这一步。
+
+在`linux6.0/tools/lib/bpf/libbpf.c`中定义了如下几个结构体完成对编译得到的eBPF的elf格式文件的**表示**：
+
+首先是`struct bpf_program`，结构如下（以省略部分参数，完整请参考源码）：
+
+```c
+struct bpf_program {
+	char *name;
+	char *sec_name;
+	size_t sec_idx;
+	const struct bpf_sec_def *sec_def;
+    
+    /* offset用来处理elf格式文件 */
+	size_t sec_insn_off;
+	size_t sub_insn_off;
+
+    /* insn指令 */
+	struct bpf_insn *insns;
+	size_t insns_cnt;
+
+	/* log */
+	char *log_buf;
+	size_t log_size;
+	__u32 log_level;
+};
+```
+
+该结构体完成了对**elf格式文件**（编译后的`.o`）中**段**的抽象表示，每个`bpf_program`对象，它对应了一个elf格式文件的段（section），这个section保存了内核态eBPF对应的指令字节码，字节码数据最终会由`bpf_program`包含的`struct bpf_insn`数组保存，以便后续的eBPF程序加载。
+
+然后是`struct bpf_object`，省略一些参数后结构如下：
+
+```c
+struct bpf_object {
+    /* meta data */
+	char name[BPF_OBJ_NAME_LEN];
+	char license[64];
+	__u32 kern_version;
+	
+    /* programs数组 */
+	struct bpf_program *programs;
+	size_t nr_programs;
+    /* map数组 */
+	struct bpf_map *maps;
+	size_t nr_maps;
+};
+```
+
+该结构体完成了对一个**完整的elf格式文件**的抽象表示，每个`bpf_object`对象对应了一个完整的`.o`文件，即一个完整的elf格式文件。它一般有多个段，因此`bpf_object`也包含了多个`bpf_program`，但这里并不是把elf文件所有的section都映射为一个`bpf_program`，而是和eBPF相关的段才会（而且合理怀疑这里的把elf文件加载用到了mmap技术）。
+
+这是完成了表示的过程，下面考虑对其的操作。先不考虑丰富的功能，最基础的支持eBPF执行的操作应该有：
+
+- 通过`elf`文件创建一个`bpf_object`；（创建）
+- 通过`bpf_object`加载eBPF程序到内核中；（加载）
+
+围绕这两个操作介绍。
+
+1、**创建**；在`linux6.0/tools/lib/bpf/libbpf.h`下声明了下面如下函数：
+
+```c
+/**
+ * @brief **bpf_object__open_file()** creates a bpf_object by opening
+ * the BPF ELF object file pointed to by the passed path and loading it
+ * into memory.
+ * @param path BPF object file path
+ * @param opts options for how to load the bpf object, this parameter is
+ * optional and can be set to NULL
+ * @return pointer to the new bpf_object; or NULL is returned on error,
+ * error code is stored in errno
+ */
+LIBBPF_API struct bpf_object *
+bpf_object__open_file(const char *path, const struct bpf_object_open_opts *opts);
+```
+
+由注释可以看出来，`bpf_object__open_file()`函数通过指定路径上的文件创建一个`bpf_object`对象并返回（这个加载是将elf格式文件以`bpf_object`对象的形式加载到内存中），第二个参数指定了加载文件的模式，暂时忽略。通过该函数我们可以指定外部的elf文件（一般就是eBPF内核态的代码编译成的`.o`文件），将其创建为`bpf_object`从而引入内部，为下一步加载做准备。
+
+2、**加载**；在`linux6.0/tools/lib/bpf/libbpf.h`下声明了如下函数：
+
+```c
+/* Loadobject into kernel */
+LIBBPF_API int bpf_object__load(struct bpf_object *obj);
+```
+
+该函数接收一个`bpf_object`对象，完成将其加载到内核中的过程，其实现是执行了如下的调用链（没继续往下查了...）：
+
+```c
+int bpf_object__load(struct bpf_object *obj)
+{
+	return bpf_object_load(obj, 0, NULL);
+}
+
+static int bpf_object__load_progs (struct bpf_object *obj, int log_level)
+{
+	// ...
+    bpf_object_load_prog(obj, prog, prog->insns, prog->insns_cnt,
+					   obj->license, obj->kern_version, &prog->fd);
+    // ...
+}
+
+static int bpf_object_load_prog (struct bpf_object *obj, struct bpf_program *prog,
+				struct bpf_insn *insns, int insns_cnt,
+				const char *license, __u32 kern_version, int *prog_fd)
+{
+	// ...
+    bpf_gen__prog_load(obj->gen_loader, prog->type, prog->name,
+				   license, insns, insns_cnt, &load_attr,
+				   prog - obj->programs);
+    // ...
+}
+
+void bpf_gen__prog_load (struct bpf_gen *gen,
+			enum bpf_prog_type prog_type, const char *prog_name,
+			const char *license, struct bpf_insn *insns, size_t insn_cnt,
+			struct bpf_prog_load_opts *load_attr, int prog_idx)
+{
+	// ...
+	/* emit PROG_LOAD command */
+	emit_sys_bpf(gen, BPF_PROG_LOAD, prog_load_attr, attr_size);
+	// ...
+}
+```
+
+通过`bpf_object__load()`函数我们可以加载一个从外部引入的elf格式eBPF文件到内核。于是到现在为止，我们完成了从`struct bpf_insn`这种内部的字节码数组方式到外部文件引入的方式的转变，已经可以通过高级语言编写内核eBPF代码完成复杂的任务。
+
+举个简单eBPF程序用户空间的示例（取自`linux6.0/samples/bpf/tracex4_user.c`），结构经过了简化，简单看一下这个过程就可以：
+
+```c
+int main(int ac, char **argv)
+{
+	struct bpf_link *links[2];
+	struct bpf_program *prog;
+	struct bpf_object *obj;
+	char filename[256];
+	int map_fd, i, j = 0;
+
+	obj = bpf_object__open_file(filename, NULL);
+	if (libbpf_get_error(obj)) {
+		fprintf(stderr, "ERROR: opening BPF object file failed\n");
+		return 0;
+	}
+
+	/* load BPF program */
+	if (bpf_object__load(obj)) {
+		fprintf(stderr, "ERROR: loading BPF object file failed\n");
+		goto cleanup;
+	}
+
+	map_fd = bpf_object__find_map_fd_by_name(obj, "my_map");
+	if (map_fd < 0) {
+		fprintf(stderr, "ERROR: finding a map in obj file failed\n");
+		goto cleanup;
+	}
+	
+    /* attach */
+	bpf_object__for_each_program(prog, obj) {
+		links[j] = bpf_program__attach(prog);
+		if (libbpf_get_error(links[j])) {
+			fprintf(stderr, "ERROR: bpf_program__attach failed\n");
+			links[j] = NULL;
+			goto cleanup;
+		}
+		j++;
+	}
+}
+```
+
+同样，libbpf也提供了其他基于`bpf_object`的函数以供使用，均声明在`linux6.0/tools/lib/bpf/libbpf.h`下：
+
+```c
+/**
+ * @brief **bpf_object__open_mem()** creates a bpf_object by reading
+ * the BPF objects raw bytes from a memory buffer containing a valid
+ * BPF ELF object file.
+ * @param obj_buf pointer to the buffer containing ELF file bytes
+ * @param obj_buf_sz number of bytes in the buffer
+ * @param opts options for how to load the bpf object
+ * @return pointer to the new bpf_object; or NULL is returned on error,
+ * error code is stored in errno
+ */
+LIBBPF_API struct bpf_object* bpf_object__open_mem(const void *obj_buf, size_t obj_buf_sz,
+		     const struct bpf_object_open_opts *opts);
+/* Unload object from kernel */
+LIBBPF_API void bpf_object__close(struct bpf_object *object);
+
+LIBBPF_API struct bpf_program* bpf_object__find_program_by_name (const struct bpf_object *obj,
+				 const char *name);
+/**
+ * @brief **bpf_program__attach()** is a generic function for attaching
+ * a BPF program based on auto-detection of program type, attach type,
+ * and extra paremeters, where applicable.
+ *
+ * @param prog BPF program to attach
+ * @return Reference to the newly created BPF link; or NULL is returned on error,
+ * error code is stored in errno
+ *
+ * This is supported for:
+ *   - kprobe/kretprobe (depends on SEC() definition)
+ *   - uprobe/uretprobe (depends on SEC() definition)
+ *   - tracepoint
+ *   - raw tracepoint
+ *   - tracing programs (typed raw TP/fentry/fexit/fmod_ret)
+ */
+LIBBPF_API struct bpf_link* bpf_program__attach(const struct bpf_program *prog);
+```
+
+以上是libbpf对user态程序编写支持的简单介绍，经过该部分，我们已经理解了怎样把一个外部的BPF ELF文件引入内部并加载到内核的基本逻辑，清楚了`*_kern.c`与`*_user.c`从单个文件中分离开来的过程。
+
+#### kernel
+
+
+
+首先什么是bpf-helpers？bpf-helpers是由`libbpf`库提供的一系列辅助函数，用来便捷地书写eBPF程序。同时helpers也为eBPF提供了受限的内核接口，一方面该接口是受限的，一个eBPF程序有它能够调用的helpers集合，是全部helpers的一个子集，保证了安全性；另一方面该接口封装了内核结构，使eBPF可以不受内核版本影响而实现同样的功能。
+
+> [man page](https://man7.org/linux/man-pages/man7/bpf-helpers.7.html#top_of_page)对于bpf-helpers的说明：
+>
+> The extended Berkeley Packet Filter (eBPF) subsystem consists in programs written in a pseudo-assembly language, then attached to one of the several kernel hooks and run in reaction of specific events. This framework differs from the older, "classic" BPF (or "cBPF") in several aspects, one of them being the ability to call special functions (or "helpers") from within a program.  These functions are restricted to a white-list of helpers defined in the kernel.
+
+
+
+
 
 
 
