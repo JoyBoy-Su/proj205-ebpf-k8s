@@ -1388,7 +1388,7 @@ bpf-helpers函数可以方便地被verification校验是否超越本type程序�
 
 由上面的过程，我们已经到了分离kernel与user的方式书写eBPF代码，那么kernel代码怎么书写？kernel的代码并不是像用户代码一样有一个main函数，启动时会作为一个新的进程执行，而是一些静态的代码被系统调用。因此它和用户进程编写略有不同。
 
-我们在上面的分析中知道，`bpf_program`代表了一个eBPF ELF的一个section，`bpf_object`代表了一个eBPF ELF文件。结合这个思路，我们在编写kernel代码时应该要明确它所在的section，以供创建`bpf_program`时使用。为了方便这个操作，libbpf为我们定义了一个方便使用的宏`SEC(name)`，以后会经常用到它：
+我们在上面的分析中知道，`bpf_program`代表了一个eBPF ELF的一个section，`bpf_object`代表了一个eBPF ELF文件。结合这个思路，我们在编写kernel代码时应该要明确它所在的section，以供创建`bpf_program`时使用。为了方便这个操作，libbpf为我们定义了一个方便使用的宏`SEC(name)`，（在头文件`<bpf/bpf_helpers.h>`中）以后会经常用到它：
 
 ```c
 /*
@@ -1412,198 +1412,335 @@ bpf-helpers函数可以方便地被verification校验是否超越本type程序�
 
 到目前为止，我们通过了解libbpf中的一些结构体和接口，清楚了libbpf为我们提供了一系列方便的函数供我们完成功能，同时它也帮助我们把eBPF的内核字节码和用户进程的开发分离，`*_user.c`专注于加载kernel代码并完成用户态的功能，`*_kern.c`专注于内核态的功能实现，便捷了eBPF的开发过程。
 
-下面使用一个用libbpf库开发eBPF的示例代码，这里就不自己编写，而是采用`linux6.0/samples/bpf`下的`tracex4_user.c`和`tracex4_kern.c`做分析：
+下面使用一个用libbpf库开发eBPF的示例代码，并给出编译eBPF的方式，以最简单的一个hello world为例（`linux6.0/samples/bpf`下也提供了很多由libbpf书写的参考程序可以看一下）
 
-`tracex4_kern.c`，各行分析见注释：
+`hello_kern.c`，各行分析见注释：
 
 ```c
-/* Copyright (c) 2015 PLUMgrid, http://plumgrid.com
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of version 2 of the GNU General Public
- * License as published by the Free Software Foundation.
+/**
+ * @file hello_kern.c
+ * @author JiadiSu (20302010043@fudan.edu.cn)
+ * @brief 通过libbpf接口实现一个hello world
+ * @version 0.1
+ * @date 2023-04-25
+ * 
+ * @copyright Copyright (c) 2023
+ * 编译：
+ * clang -target bpf -Wall -O2 -c hello_kern.c -o hello_kern.o
+ * 产生汇编文件：
+ * clang -target bpf -S -o hello_kern.S hello_kern.c
  */
-#include <linux/ptrace.h>
-#include <linux/version.h>
+
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
 
-struct pair {
-	u64 val;
-	u64 ip;
-};
-
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__type(key, long);
-	__type(value, struct pair);
-	__uint(max_entries, 1000000);
-} my_map SEC(".maps");				/* 通过SEC(".map")创建一个map用来存取数据 */
-
-/* kprobe is NOT a stable ABI. If kernel internals change this bpf+kprobe
- * example will no longer be meaningful
- */
-SEC("kprobe/kmem_cache_free")		/* 进入kmem_cache_free时的探针 */
-int bpf_prog1(struct pt_regs *ctx)
+SEC("tp/syscalls/sys_enter_openat")
+int hello_world(void* ctx)
 {
-    /* 声明在<bpf/bpf_tracing.h> #define PT_REGS_PARM2(x) ((x)->si) */
-	long ptr = PT_REGS_PARM2(ctx);
-	
-    /* bpf-helpers，删除map中ptr这个键 */
-	bpf_map_delete_elem(&my_map, &ptr);
-	return 0;
+    char msg[] = "Hello world!\n";
+    /* bpf-helpers 声明在<bpf/bpf_helper_defs.h> */
+    bpf_trace_printk(msg, sizeof(msg));
+    return 0;
 }
 
-SEC("kretprobe/kmem_cache_alloc_node")
-int bpf_prog2(struct pt_regs *ctx)
-{
-    /* 声明在<bpf/bpf_tracing.h> #define PT_REGS_RC(x) ((x)->ax) */
-	long ptr = PT_REGS_RC(ctx);
-	long ip = 0;
-
-	/**
-	 * 声明在<bpf/bpf_tracing.h>
-	 * #define BPF_KRETPROBE_READ_RET_IP ({ (ip) = (ctx)->link; })
-	 * 获得kmem_cache_alloc_node调用者的ip 
-	 */
-	BPF_KRETPROBE_READ_RET_IP(ip, ctx);
-
-	struct pair v = {
-		.val = bpf_ktime_get_ns(),	/* bpf-helpers，获取系统启动以来的时间 */
-		.ip = ip,
-	};
-	
-    /* bpf-helpers，更新map中ptr这个键的值为v */
-	bpf_map_update_elem(&my_map, &ptr, &v, BPF_ANY);
-	return 0;
-}
-
-/* 设置eBPF的license和version */
 char _license[] SEC("license") = "GPL";
-u32 _version SEC("version") = LINUX_VERSION_CODE;
 ```
 
-`tracex4_user.c`，各行分析见注释：
+该代码捕获`openat()`系统调用，每次捕获到后输出`Hello world!`到对应调试文件（`/sys/kernel/debug/tracing/trace_pipe`）。
+
+按照如下指令编译：
+
+```bash
+# 直接生成hello_kern.o
+$ clang -target bpf -Wall -O2 -c hello_kern.c -o hello_kern.o
+# 产生hello_kern.S汇编文件
+$ clang -target bpf -S -o hello_kern.S hello_kern.c
+```
+
+该C程序生成的`.S`文件：
+
+```assembly
+	.text
+	.file	"hello_kern.c"
+	.section	"tp/syscalls/sys_enter_openat","ax",@progbits
+	.globl	hello_world             # -- Begin function hello_world
+	.p2align	3
+	.type	hello_world,@function
+hello_world:                            # @hello_world
+# %bb.0:
+	*(u64 *)(r10 - 8) = r1
+	r1 = 10
+	*(u16 *)(r10 - 12) = r1
+	r1 = 560229490
+	*(u32 *)(r10 - 16) = r1
+	r1 = 8031924123371070792 ll
+	*(u64 *)(r10 - 24) = r1
+	r1 = bpf_trace_printk ll
+	r1 = *(u64 *)(r1 + 0)
+	r2 = r10
+	r2 += -24
+	r3 = 14
+	*(u64 *)(r10 - 32) = r1
+	r1 = r2
+	r2 = r3
+	r3 = *(u64 *)(r10 - 32)
+	callx r3
+	r1 = 0
+	*(u64 *)(r10 - 40) = r0
+	r0 = r1
+	exit
+.Lfunc_end0:
+	.size	hello_world, .Lfunc_end0-hello_world
+                                        # -- End function
+	.type	.L__const.hello_world.msg,@object # @__const.hello_world.msg
+	.section	.rodata.str1.1,"aMS",@progbits,1
+.L__const.hello_world.msg:
+	.asciz	"Hello world!\n"
+	.size	.L__const.hello_world.msg, 14
+
+	.type	bpf_trace_printk,@object # @bpf_trace_printk
+	.data
+	.p2align	3
+bpf_trace_printk:
+	.quad	6
+	.size	bpf_trace_printk, 8
+
+	.type	_license,@object        # @_license
+	.section	license,"aw",@progbits
+	.globl	_license
+_license:
+	.asciz	"GPL"
+	.size	_license, 4
+
+	.addrsig
+	.addrsig_sym hello_world
+	.addrsig_sym bpf_trace_printk
+	.addrsig_sym _license
+```
+
+可以看到该汇编有`tp/syscalls/sys_enter_open`这个段，这个段是由`SEC("tp/syscalls/sys_enter_open")`，指定的，后面会在加载到内核时使用。
+
+再执行如下指令观察其生成的`.o`文件，发现同样发现有一个段是`tp/syscalls/sys_enter_open`：
+
+```bash
+$ readelf --section-details --headers hello_kern.o 
+ELF Header:
+  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00 
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            UNIX - System V
+  ABI Version:                       0
+  Type:                              REL (Relocatable file)
+  Machine:                           Linux BPF
+  Version:                           0x1
+  Entry point address:               0x0
+  Start of program headers:          0 (bytes into file)
+  Start of section headers:          408 (bytes into file)
+  Flags:                             0x0
+  Size of this header:               64 (bytes)
+  Size of program headers:           0 (bytes)
+  Number of program headers:         0
+  Size of section headers:           64 (bytes)
+  Number of section headers:         8
+  Section header string table index: 1
+
+Section Headers:
+  [Nr] Name
+       Type              Address          Offset            Link
+       Size              EntSize          Info              Align
+       Flags
+  [ 0] 
+       NULL             0000000000000000  0000000000000000  0
+       0000000000000000 0000000000000000  0                 0
+       [0000000000000000]: 
+  [ 1] .strtab
+       STRTAB           0000000000000000  0000000000000122  0
+       0000000000000073 0000000000000000  0                 1
+       [0000000000000000]: 
+  [ 2] .text
+       PROGBITS         0000000000000000  0000000000000040  0
+       0000000000000000 0000000000000000  0                 4
+       [0000000000000006]: ALLOC, EXEC
+  [ 3] tp/syscalls/sys_enter_openat
+       PROGBITS         0000000000000000  0000000000000040  0
+       0000000000000068 0000000000000000  0                 8
+       [0000000000000006]: ALLOC, EXEC
+  [ 4] .rodata.str1.1
+       PROGBITS         0000000000000000  00000000000000a8  0
+       000000000000000e 0000000000000001  0                 1
+       [0000000000000032]: ALLOC, MERGE, STRINGS
+  [ 5] license
+       PROGBITS         0000000000000000  00000000000000b6  0
+       0000000000000004 0000000000000000  0                 1
+       [0000000000000003]: WRITE, ALLOC
+  [ 6] .llvm_addrsig
+       LOOS+0xfff4c03   0000000000000000  0000000000000120  7
+       0000000000000002 0000000000000000  0                 1
+       [0000000080000000]: EXCLUDE
+  [ 7] .symtab
+       SYMTAB           0000000000000000  00000000000000c0  1
+       0000000000000060 0000000000000018  2                 8
+       [0000000000000000]: 
+
+There are no program headers in this file.
+```
+
+`hello_user.c`，各行分析见注释：
 
 ```c
-// SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (c) 2015 PLUMgrid, http://plumgrid.com
+/**
+ * @file hello_user.c
+ * @author JiadiSu (20302010043@fudan.edu.cn)
+ * @brief 通过libbpf接口实现一个hello world
+ * @version 0.1
+ * @date 2023-04-25
+ * 
+ * @copyright Copyright (c) 2023
+ * 编译：gcc hello_user.c -o hello -lbpf
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <signal.h>
+
+#include <bpf/bpf.h>            /* 一些对bpf syscall的封装 */
+#include <bpf/libbpf.h>         /* 一些bpf_progam和bpf_object相关的函数 */
+#include <fcntl.h>
 #include <unistd.h>
-#include <stdbool.h>
-#include <string.h>
-#include <time.h>
 
-#include <bpf/bpf.h>			/* 一些对bpf syscall的封装 */
-#include <bpf/libbpf.h>			/* 一些bpf_progam和bpf_object相关的函数 */
-
-struct pair {
-	long long val;
-	__u64 ip;
-};
-
-/* 获得当前时钟的毫秒值 */
-static __u64 time_get_ns(void)
+int main(int argc, char const *argv[])
 {
-	struct timespec ts;
-
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return ts.tv_sec * 1000000000ull + ts.tv_nsec;
-}
-
-/* 输出fd对应的map中存储的数据 */
-static void print_old_objects(int fd)
-{
-	long long val = time_get_ns();
-	__u64 key, next_key;
-	struct pair v;
-
-	key = write(1, "\e[1;1H\e[2J", 11); /* clear screen */
-
-	key = -1;
-    /* bpf_map_get_next_key()声明在<bpf/bpf.h>，封装了bpf(BPF_MAP_GET_NEXT_KEY) */
-	while (bpf_map_get_next_key(fd, &key, &next_key) == 0) {
-        /* 同样声明在<bpf/bpf.h> ，获取查询值 */
-		bpf_map_lookup_elem(fd, &next_key, &v);
-		key = next_key;
-		if (val - v.val < 1000000000ll)
-			/* object was allocated more then 1 sec ago */
-			continue;
-		printf("obj 0x%llx is %2lldsec old was allocated at ip %llx\n",
-		       next_key, (val - v.val) / 1000000000ll, v.ip);
-	}
-}
-
-int main(int ac, char **argv)
-{
-	struct bpf_link *links[2];
+    struct bpf_link* link;
 	struct bpf_program *prog;
 	struct bpf_object *obj;
 	char filename[256];
-	int map_fd, i, j = 0;
 
 	snprintf(filename, sizeof(filename), "%s_kern.o", argv[0]);
     
-    /* bpf_object__open_file()声明在<bpf/libbpf.h> */
+    /* 声明在<bpf/libbpf.h>，打开filename对应的eBPF */
 	obj = bpf_object__open_file(filename, NULL);
 	if (libbpf_get_error(obj)) {
 		fprintf(stderr, "ERROR: opening BPF object file failed\n");
 		return 0;
 	}
 
-	/* load BPF program */
+	/* 声明在<bpf/libbpf.h>，加载到内核 */
 	if (bpf_object__load(obj)) {
 		fprintf(stderr, "ERROR: loading BPF object file failed\n");
 		goto cleanup;
 	}
 	
-    /* 根据map的名字查询fd，这里的map名字是由tracex4_kern.c中my_map SEC(".map")处设置的 */
-	map_fd = bpf_object__find_map_fd_by_name(obj, "my_map");
-	if (map_fd < 0) {
-		fprintf(stderr, "ERROR: finding a map in obj file failed\n");
-		goto cleanup;
-	}
-	
-    /* 循环每一个bpf_program，其实就是循环SEC("kprobe")和SEC("kretprobe") */
+    /* 循环每一个bpf_program，其实就是循环SEC("tp/syscalls/sys_enter_open") */
 	bpf_object__for_each_program(prog, obj) {
-		links[j] = bpf_program__attach(prog);	/* attach eBPF的程序 */
-		if (libbpf_get_error(links[j])) {
+		link = bpf_program__attach(prog);	/* attach eBPF的程序 */
+		if (libbpf_get_error(link)) {
 			fprintf(stderr, "ERROR: bpf_program__attach failed\n");
-			links[j] = NULL;
+			link = NULL;
 			goto cleanup;
 		}
-		j++;
 	}
-	
-    /* 每秒输出map的内容 */
-	for (i = 0; ; i++) {
-		print_old_objects(map_fd);
-		sleep(1);
-	}
+
+    /* 死循环不退出 */
+	while (1) {}
 
 cleanup:
-	for (j--; j >= 0; j--)
-		bpf_link__destroy(links[j]);
-
+    bpf_link__destroy(link);
 	bpf_object__close(obj);
 	return 0;
 }
 ```
 
+该文件完成了`hello_kernel`的挂载，并死循环不退出。
 
+按照如下指令编译：
+
+```bash
+$ gcc hello_user.c -o hello -lbpf	# 链接bpf库
+```
+
+执行完成后目录下出现如下文件：
+
+```bash
+$ ls -l | grep hello
+-rwxr-xr-x  1 root root 17240 Apr 25 13:47 hello
+-rw-rw-r--  1 root root   688 Apr 25 13:53 hello_kern.c
+-rw-r--r--  1 root root   920 Apr 25 13:54 hello_kern.o
+-rw-r--r--  1 root root  1281 Apr 25 13:53 hello_kern.S
+-rw-rw-r--  1 root root  1532 Apr 25 13:55 hello_user.c
+```
+
+其中`hello`即最后可执行的用户空间代码，负责挂载eBPF程序到内核挂载点。需要注意，user进程结束后会关闭挂载的eBPF程序，因此最后是一个死循环。
+
+执行与测试过程：
+
+```bash
+# 后台启动hello进程
+$ ./hello &
+[1] 510473
+# 测试挂载是否成功
+$ bpftool prog list
+227: cgroup_skb  tag 6deef7357e7b4530  gpl
+        loaded_at 2023-04-17T15:05:21+0800  uid 0
+        xlated 64B  jited 61B  memlock 4096B
+228: cgroup_skb  tag 6deef7357e7b4530  gpl
+        loaded_at 2023-04-17T15:05:21+0800  uid 0
+        xlated 64B  jited 61B  memlock 4096B
+229: cgroup_skb  tag 6deef7357e7b4530  gpl
+        loaded_at 2023-04-17T15:05:21+0800  uid 0
+        xlated 64B  jited 61B  memlock 4096B
+230: cgroup_skb  tag 6deef7357e7b4530  gpl
+        loaded_at 2023-04-17T15:05:21+0800  uid 0
+        xlated 64B  jited 61B  memlock 4096B
+231: cgroup_skb  tag 6deef7357e7b4530  gpl
+        loaded_at 2023-04-17T15:05:21+0800  uid 0
+        xlated 64B  jited 61B  memlock 4096B
+232: cgroup_skb  tag 6deef7357e7b4530  gpl
+        loaded_at 2023-04-17T15:05:21+0800  uid 0
+        xlated 64B  jited 61B  memlock 4096B
+350: tracepoint  name hello_world  tag fc3c56cde923df12  gpl		# hello_world
+        loaded_at 2023-04-25T14:01:39+0800  uid 0
+        xlated 104B  jited 80B  memlock 4096B
+# 输出调试信息
+$ cat /sys/kernel/debug/tracing/trace_pipe
+...
+ systemd-journal-330     [000] .... 9494668.552653: 0: Hello world!
+ systemd-journal-330     [000] .... 9494668.552695: 0: Hello world!
+         systemd-1       [000] .... 9494675.905373: 0: Hello world!
+         systemd-1       [000] .... 9494675.905442: 0: Hello world!
+ Catalina-utilit-406088  [000] .... 9494676.057341: 0: Hello world!
+ Catalina-utilit-406088  [000] .... 9494676.057457: 0: Hello world!
+...
+# 结束cat进程
+$ ^C
+# 结束hello进程
+$ kill 510473
+# 再次观察挂载点的情况：hello_world消失
+$ bpftool prog list
+227: cgroup_skb  tag 6deef7357e7b4530  gpl
+        loaded_at 2023-04-17T15:05:21+0800  uid 0
+        xlated 64B  jited 61B  memlock 4096B
+228: cgroup_skb  tag 6deef7357e7b4530  gpl
+        loaded_at 2023-04-17T15:05:21+0800  uid 0
+        xlated 64B  jited 61B  memlock 4096B
+229: cgroup_skb  tag 6deef7357e7b4530  gpl
+        loaded_at 2023-04-17T15:05:21+0800  uid 0
+        xlated 64B  jited 61B  memlock 4096B
+230: cgroup_skb  tag 6deef7357e7b4530  gpl
+        loaded_at 2023-04-17T15:05:21+0800  uid 0
+        xlated 64B  jited 61B  memlock 4096B
+231: cgroup_skb  tag 6deef7357e7b4530  gpl
+        loaded_at 2023-04-17T15:05:21+0800  uid 0
+        xlated 64B  jited 61B  memlock 4096B
+232: cgroup_skb  tag 6deef7357e7b4530  gpl
+        loaded_at 2023-04-17T15:05:21+0800  uid 0
+        xlated 64B  jited 61B  memlock 4096B
+```
+
+于是由上面的书写与编译执行过程，我们可以初步认识到**如何使用libbpf完整地搭建一个eBPF程序**，它的结构是什么，执行大致过程是怎样的。
 
 ### 各个头文件提供的接口总结
 
-- `<linux/bpf.h>`
-- `<bpf/bpf.h>`
-- `<bpf/libbpf.h>`
-- `<bpf/bpf_helpers.h>`
-
-
+- `<linux/bpf.h>`：bpf最原生的一些结构体，`struct bpf_insn`，`union bpf_attr`等；
+- `<bpf/bpf.h>`：libbpf提供的库，封装了一些用户态可用来便捷进行系统调用的函数，如`bpf_map_update_elem()`等；
+- `<bpf/libbpf.h>`：libbpf提供的库，封装了`struct bpf_program`和`struct bpf_object`相关的定义和函数；
+- `<bpf/bpf_helpers.h>`：libbpf提供的库，封装了一些一般在kernel使用的函数，如`bpf_map_lookup_elem()`、`bpf_trace_printk()`等，还有最常见的一个宏`SEC(name)`；
 
 ## X、eBPF的一些原理
 
