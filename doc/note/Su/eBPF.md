@@ -1742,6 +1742,10 @@ $ bpftool prog list
 - `<bpf/libbpf.h>`：libbpf提供的库，封装了`struct bpf_program`和`struct bpf_object`相关的定义和函数；
 - `<bpf/bpf_helpers.h>`：libbpf提供的库，封装了一些一般在kernel使用的函数，如`bpf_map_lookup_elem()`、`bpf_trace_printk()`等，还有最常见的一个宏`SEC(name)`；
 
+## 三、eBPF-CO-RE
+
+
+
 ## X、eBPF的一些原理
 
 ### bpf-map与file system
