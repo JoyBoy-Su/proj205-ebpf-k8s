@@ -24,7 +24,7 @@
 
 解决docker的网络问题：运行`~/fudan_net_auth.sh`脚本进行网络认证即可；
 
-解决`__u32 type not defined`的bug，通过生成`vmlinux.h`头文件，[解决过程](./问题与解决.md#error: unknown type name '__u64')；
+解决`__u32 type not defined`的bug，通过生成`vmlinux.h`头文件，[解决过程](./问题与解决.md#error:unknown_type_name_'__u64')；
 
 ### 2023-04-27
 
@@ -32,4 +32,4 @@
 
 在docker中安装libbpf和bpftool工具，过程见[详情](./bpf环境搭建.md)；
 
-通过建立软链接解决fatal error: 'asm/types.h' file not found的问题，过程见[详情](./问题与解决.md#fatal error: 'asm/types.h' file not found)
+通过建立软链接解决fatal error: 'asm/types.h' file not found的问题，过程见[详情](./问题与解决.md#fatal_error:_'asm/types.h'_file_not_found)
