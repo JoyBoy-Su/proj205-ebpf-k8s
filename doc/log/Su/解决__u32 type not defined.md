@@ -1,0 +1,121 @@
+# 解决__u32 type not defined的问题
+
+该问题是由于bpf程序需要去访问内核的数据类型而没有一个mapping关系导致的，需要通过生成`vmlinux.h`头文件并由bpf程序引入。该文件表示了当前系统的内核数据类型与bpf用到的内核数据类型之间的一个映射关系，相当于做了一个抽象层。
+
+`vmlinux.h` 是使用工具生成的代码文件。它包含了系统运行 Linux 内核源代码中使用的所有类型定义。当我们编译 Linux 内核时，会输出一个称作 `vmlinux` 的文件组件，其是一个 [ELF](https://en.wikipedia.org/wiki/Executable_and_Linkable_Format) 的二进制文件，包含了编译好的可启动内核。`vmlinux` 文件通常也会被打包在主要的 Linux 发行版中。
+
+生成 `vmlinux.h` 文件的命令如下：
+
+```sh
+$ bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+```
+
+直接执行，此时报错：
+
+```sh
+libbpf: failed to get EHDR from /sys/kernel/btf/vmlinux
+Error: failed to load BTF from /sys/kernel/btf/vmlinux: Unknown error -4001
+```
+
+原因是`/sys/kernel/btf/vmlinux`文件的不是一个ELF格式的文件，而bpftool只接受包含编译的运行内核的ELF文件，可以通过`file`指令查看：
+
+```sh
+$ file /sys/kernel/btf/vmlinux 
+/sys/kernel/btf/vmlinux: data
+```
+
+于是需要把`vmlinux`变成ELF格式文件，找到了如下脚本：
+
+```sh
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# ----------------------------------------------------------------------
+# extract-vmlinux - Extract uncompressed vmlinux from a kernel image
+#
+# Inspired from extract-ikconfig
+# (c) 2009,2010 Dick Streefland <dick@streefland.net>
+#
+# (c) 2011      Corentin Chary <corentin.chary@gmail.com>
+#
+# ----------------------------------------------------------------------
+
+check_vmlinux()
+{
+	# Use readelf to check if it's a valid ELF
+	# TODO: find a better to way to check that it's really vmlinux
+	#       and not just an elf
+	readelf -h $1 > /dev/null 2>&1 || return 1
+
+	cat $1
+	exit 0
+}
+
+try_decompress()
+{
+	# The obscure use of the "tr" filter is to work around older versions of
+	# "grep" that report the byte offset of the line instead of the pattern.
+
+	# Try to find the header ($1) and decompress from here
+	for	pos in `tr "$1\n$2" "\n$2=" < "$img" | grep -abo "^$2"`
+	do
+		pos=${pos%%:*}
+		tail -c+$pos "$img" | $3 > $tmp 2> /dev/null
+		check_vmlinux $tmp
+	done
+}
+
+# Check invocation:
+me=${0##*/}
+img=$1
+if	[ $# -ne 1 -o ! -s "$img" ]
+then
+	echo "Usage: $me <kernel-image>" >&2
+	exit 2
+fi
+
+# Prepare temp files:
+tmp=$(mktemp /tmp/vmlinux-XXX)
+trap "rm -f $tmp" 0
+
+# That didn't work, so retry after decompression.
+try_decompress '\037\213\010' xy    gunzip
+try_decompress '\3757zXZ\000' abcde unxz
+try_decompress 'BZh'          xy    bunzip2
+try_decompress '\135\0\0\0'   xxx   unlzma
+try_decompress '\211\114\132' xy    'lzop -d'
+try_decompress '\002!L\030'   xxx   'lz4 -d'
+try_decompress '(\265/\375'   xxx   unzstd
+
+# Finally check for uncompressed images or objects:
+check_vmlinux $img
+
+# Bail out:
+echo "$me: Cannot find vmlinux." >&2
+```
+
+将该脚本保存为`extract_vmlinux.sh`（保存到工作目录，不是系统目录，我保存在了`~/mydev/ebpf/libbpf`下），并执行如下指令使其具有执行权限：
+
+```bash
+$ chmod a+x extract_vmlinux.sh
+```
+
+执行如下指令将系统的`vmlinux`转为ELF格式并保存在当前目录：
+
+```bash
+$ extract-vmlinux /boot/vmlinuz-$(uname -r) > vmlinux
+```
+
+此时通过`file`指令查看文件类型：
+
+```bash
+$ file vmlinux
+vmlinux: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statically linked, BuildID[sha1]=fd5e332bed3f4a76d12d80a85aec63e828bf2ec4, stripped
+```
+
+可以发现已经是ELF格式了，然后再通过btftool生成头文件：
+
+```bash
+$ bpftool btf dump file vmlinux format c > vmlinux.h
+```
+
+成功生成，然后在bpf程序中`#include "vmlinux.h"`即可解决类型不存在的问题。
