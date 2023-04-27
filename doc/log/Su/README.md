@@ -4,7 +4,7 @@
 
 ### 2023-04-24
 
-阅读`linux6.0`源码与blog，整理eBPF的接口笔记，见[bpf_syscall](../../note/Su/eBPF#bpf-syscall)；
+阅读`linux6.0`源码与blog，整理eBPF的接口笔记，见[bpf_syscall](../../note/Su/eBPF.md#bpf-syscall)；
 
 使用`bpf()`系统调用书写简单的程序，见目录[bpf_syscall](../../note/Su/test/bpf_syscall)；
 
@@ -25,3 +25,9 @@
 解决docker的网络问题：运行`~/fudan_net_auth.sh`脚本进行网络认证即可；
 
 解决`__u32 type not defined`的bug，通过生成`vmlinux.h`头文件，解决过程[解决过程](./解决__u32_type_not_defined.md)；
+
+### 2023-04-27
+
+在os课程的docker中安装docker并运行，过程见[详情](./k8s_docker安装搭建.md)，为下一步搭建k8s集群做准备；
+
+在docker中安装libbpf和bpftool工具，过程见[详情]()
