@@ -1,6 +1,6 @@
-# bpf环境搭建
+# bpf程序运行记录
 
-## 1、bpftool
+## bpftool
 
 直接apt的方式
 
@@ -23,7 +23,7 @@ $ cd linux/tools/bpf/bpftool/
 $ make && make install
 ```
 
-## 2、libbpf库
+## libbpf库
 
 安装libbpf依赖
 
@@ -58,4 +58,3 @@ $ make && make install
 ```bash
 $ apt-get install pkg_config
 ```
-
