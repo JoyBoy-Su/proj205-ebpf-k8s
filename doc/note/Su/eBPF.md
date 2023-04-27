@@ -919,6 +919,8 @@ $ clang -v
 $ llc --version
 # test iproute2
 $ ip link
+# libbpf
+$ apt-get install libbpf-dev
 ```
 
 libbpf其实就包括了eBPF程序中常见的头文件`<bpf/bpf_helpers.h>`、`<bpf/bpf_tracing.h>`等，在安装好libbpf后上述文件会出现在`/usr/include/bpf`下供使用。
