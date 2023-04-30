@@ -114,7 +114,7 @@ bpf-map是为了保存多类型数据的通用数据结构（是一个可以存�
 ```c
 enum bpf_map_type map_type;		/* bpf map的类型 */
 unsigned int key_size;			/* map存取数据的key的大小，字节为单位 */
-unsigned int value_size;		/* map存取数据的key的大小，字节为单位 */
+unsigned int value_size;		/* map存取数据的value的大小，字节为单位 */
 unsigned int max_entries;		/* map中最多存取的数据项个数 */
 ```
 
@@ -326,7 +326,7 @@ union bpf_attr {
 struct { /* BPF_MAP_CREATE操作使用 */
     __u32	map_type;		/* bpf map的类型 */
     __u32	key_size;		/* map存取数据的key的大小，字节为单位 */
-    __u32	value_size;		/* map存取数据的key的大小，字节为单位 */
+    __u32	value_size;		/* map存取数据的value的大小，字节为单位 */
     __u32	max_entries;	/* map中最多存取的数据项个数 */
 };
 ```
