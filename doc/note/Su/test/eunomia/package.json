@@ -1,0 +1,133 @@
+{
+    "bpf_object": "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",
+    "bpf_object_size": 12936,
+    "meta": {
+        "bpf_skel": {
+            "data_sections": [
+                {
+                    "name": ".rodata",
+                    "variables": [
+                        {
+                            "description": "Process ID to trace",
+                            "name": "pid_target",
+                            "type": "int"
+                        },
+                        {
+                            "description": "Thread ID to trace",
+                            "name": "tgid_target",
+                            "type": "int"
+                        },
+                        {
+                            "description": "User ID to trace",
+                            "name": "uid_target",
+                            "type": "int"
+                        },
+                        {
+                            "cmdarg": {
+                                "default": false,
+                                "long": "failed",
+                                "short": "f"
+                            },
+                            "description": "trace only failed events",
+                            "name": "targ_failed",
+                            "type": "bool"
+                        }
+                    ]
+                },
+                {
+                    "name": ".bss",
+                    "variables": [
+                        {
+                            "name": "__eunomia_dummy_event_ptr",
+                            "type": "struct event *"
+                        }
+                    ]
+                }
+            ],
+            "doc": {
+                "description": "Trace open family syscalls."
+            },
+            "maps": [
+                {
+                    "ident": "start",
+                    "name": "start"
+                },
+                {
+                    "ident": "events",
+                    "name": "events"
+                },
+                {
+                    "ident": "rodata",
+                    "mmaped": true,
+                    "name": "opensnoo.rodata"
+                },
+                {
+                    "ident": "bss",
+                    "mmaped": true,
+                    "name": "opensnoo.bss"
+                }
+            ],
+            "obj_name": "opensnoop_bpf",
+            "progs": [
+                {
+                    "attach": "tracepoint/syscalls/sys_enter_open",
+                    "link": true,
+                    "name": "tracepoint__syscalls__sys_enter_open"
+                },
+                {
+                    "attach": "tracepoint/syscalls/sys_enter_openat",
+                    "link": true,
+                    "name": "tracepoint__syscalls__sys_enter_openat"
+                },
+                {
+                    "attach": "tracepoint/syscalls/sys_exit_open",
+                    "link": true,
+                    "name": "tracepoint__syscalls__sys_exit_open"
+                },
+                {
+                    "attach": "tracepoint/syscalls/sys_exit_openat",
+                    "link": true,
+                    "name": "tracepoint__syscalls__sys_exit_openat"
+                }
+            ]
+        },
+        "eunomia_version": "0.3.3",
+        "export_types": [
+            {
+                "members": [
+                    {
+                        "name": "ts",
+                        "type": "unsigned long long"
+                    },
+                    {
+                        "name": "pid",
+                        "type": "int"
+                    },
+                    {
+                        "name": "uid",
+                        "type": "int"
+                    },
+                    {
+                        "name": "ret",
+                        "type": "int"
+                    },
+                    {
+                        "name": "flags",
+                        "type": "int"
+                    },
+                    {
+                        "name": "comm",
+                        "type": "char[16]"
+                    },
+                    {
+                        "name": "fname",
+                        "type": "char[255]"
+                    }
+                ],
+                "name": "event",
+                "size": 296,
+                "type_id": 56
+            }
+        ]
+    }
+}
