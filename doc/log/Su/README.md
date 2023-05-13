@@ -61,3 +61,7 @@
 配置好环境后，用eunomia-bpf框架运行`opensnoop.bpf.c`程序，也通过观察该过程的结果解决了之前的一些疑问；
 
 搭建与使用的过程见[详情](./搭建与使用eunomia-bpf框架环境.md)；
+
+### 2023-05-13
+
+在自己的云服务器（huawei cloud）上，使用docker封装依赖的环境，并用ecli安装bpf程序到宿主机上，过程见[详情](./使用docker结合ecli部署bpf程序.md)；

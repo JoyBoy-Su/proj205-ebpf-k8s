@@ -5,6 +5,8 @@
 - Ubuntu 20.04.4 LTS
 - Linux hecs-67681 5.4.0-100-generic #113-Ubuntu SMP Thu Feb 3 18:43:29 UTC 2022 x86_64 x86_64 x86_64 GNU/Linux
 
+## 试错...
+
 ### 1、查看已有镜像
 
 ```bash
@@ -317,3 +319,137 @@ $ docker run --name ubuntu-test -it -v ${PWD}:/eunomia -v /usr:/usr -v /boot:/bo
 ```
 
 启动后进入docker，并启动`ecli run`执行pacakge.json，在node上通过`bpftool prog list`发现成功挂载bpf程序。
+
+## 正确方式
+
+需要的内容：
+
+- docker image：在ubuntu的基础上添加需要的依赖；
+- ecli：用来执行package.json；
+- sources.list：镜像源；
+- package.json：待执行的bpf；
+
+### 1、构建docker image
+
+通过docker file构建出包含依赖的docker image：
+
+```dockerfile
+FROM ubuntu:20.04						# 在ubuntu:20.04的基础上构建
+
+ENV UBUNTU_SOURCE /etc/apt				# 设置环境变量UBUNTU_SOURCE
+
+COPY ./ /root							# 将宿主机（执行docker命令的机器）当前工作目录，复制到docker /root下
+
+WORKDIR /root							# 设置docker的工作目录为/root
+
+ADD sources.list $UBUNTU_SOURCE/		# 为docker的apt添加镜像源
+
+RUN apt-get update && \					# 在docker build时执行apt指令，安装依赖
+    apt-get -y install gcc libelf-dev
+
+#CMD ./ecli run /root/my/package.json
+CMD ["/bin/bash"]						# 在docker run时执行"/bin/bash"指令，切换到docker的终端
+
+```
+
+sources.list配置镜像源：
+
+```tex
+deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse
+#deb-src http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse
+#deb-src http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse
+#deb-src http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu/ jammy-proposed main restricted universe multiverse
+#deb-src http://mirrors.aliyun.com/ubuntu/ jammy-proposed main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse
+#deb-src http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse
+```
+
+将如上将如上dockerfile与ecli和sources.list放在同一目录，并在该目录下执行docker build构建docker镜像：
+
+```bash
+$ docker build -t ecli:1.0.1 .	# 指定image名为ecli 版本为1.0.1 构建目录.（即当前目录）
+```
+
+### 2、启动docker
+
+构建完成image后，查看已有镜像：
+
+```bash
+$ docker images
+REPOSITORY                 TAG            IMAGE ID       CREATED          SIZE
+ecli                       1.0.1          1e89a8629648   20 minutes ago   327MB
+```
+
+根据ecli image启动container：
+
+```bash
+$ docker run -it -v /usr/src:/usr/src:ro \				# 映射node:/usr/src到container:/usr/src
+       -v /lib/modules/:/lib/modules:ro \				# 映射node:/lib/modules到container:/lib/modules
+       -v /sys/kernel/debug/:/sys/kernel/debug:rw \		# 映射node:/sys/kernel/debug到container:/sys/kernel/debug
+       -v /root/mydev:/root/mydev \						# 映射node:/root/mydev到/root/mydev
+       --net=host --pid=host --privileged \				# 设置网络与权限
+       --name ecli ecli:1.0.1							# name image
+root@hecs-67681:~# #此时已经进入了docker中
+
+# 另起一个shell查看当前的container
+$ docker ps
+CONTAINER ID   IMAGE        COMMAND       CREATED          STATUS          PORTS     NAMES
+14630ab79551   ecli:1.0.1   "/bin/bash"   49 seconds ago   Up 48 seconds             ecli	# ecli
+```
+
+### 3、执行ecli指令
+
+启动并进入docker后，执行`/root`下的ecli完成bpf的执行：
+
+```bash
+$ ls -l
+total 19552
+-rw-r--r-- 1 root root      230 May 13 12:54 Dockerfile
+-rwxr-xr-x 1 root root 20005104 May 13 12:54 ecli
+drwxr-xr-x 6 root root     4096 Apr 17 08:55 mydev
+-rw-r--r-- 1 root root      897 May 13 12:55 sources.list
+# 执行ecli
+$ ./ecli run mydev/ebpf/eunomia/package.json 
+INFO [faerie::elf] strtab: 0xe4c symtab 0xe88 relocs 0xed0 sh_offset 0xed0
+INFO [bpf_loader_lib::skeleton::preload::section_loader] User didn't specify custom value for variable pid_target, use the default one in ELF
+INFO [bpf_loader_lib::skeleton::preload::section_loader] User didn't specify custom value for variable tgid_target, use the default one in ELF
+INFO [bpf_loader_lib::skeleton::preload::section_loader] User didn't specify custom value for variable uid_target, use the default one in ELF
+INFO [bpf_loader_lib::skeleton::preload::section_loader] load runtime arg (user specified the value through cli, or predefined in the skeleton) for targ_failed: Bool(false), real_type=<INT> '_Bool' bits:8 off:0 enc:bool, btf_type=BtfVar { name: "targ_failed", type_id: 46, kind: GlobalAlloc }
+INFO [bpf_loader_lib::skeleton::preload::section_loader] User didn't specify custom value for variable __eunomia_dummy_event_ptr, use the default one in ELF
+INFO [bpf_loader_lib::skeleton::poller] Running ebpf program...
+<1683984446> <PLAIN> TIME     TS     PID    UID    RET    FLAGS  COMM   FNAME 
+
+# 此时在物理机上查看挂载的程序，如下：
+$ bpftool prog list
+134: tracepoint  name tracepoint__sys  tag 07014be5359438f8  gpl
+        loaded_at 2023-05-13T21:27:26+0800  uid 0
+        xlated 288B  jited 167B  memlock 4096B  map_ids 75,72
+        btf_id 52
+136: tracepoint  name tracepoint__sys  tag 8ee3432dcd98ffc3  gpl
+        loaded_at 2023-05-13T21:27:26+0800  uid 0
+        xlated 288B  jited 167B  memlock 4096B  map_ids 75,72
+        btf_id 52
+137: tracepoint  name tracepoint__sys  tag 541339de114a40e6  gpl
+        loaded_at 2023-05-13T21:27:26+0800  uid 0
+        xlated 696B  jited 477B  memlock 4096B  map_ids 72,75,73
+        btf_id 52
+138: tracepoint  name tracepoint__sys  tag 541339de114a40e6  gpl
+        loaded_at 2023-05-13T21:27:26+0800  uid 0
+        xlated 696B  jited 477B  memlock 4096B  map_ids 72,75,73
+        btf_id 52
+# 同时docker中会有显示对应监测到的系统调用
+<1683984446> <PLAIN> TIME     TS     PID    UID    RET    FLAGS  COMM   FNAME  
+<1683984463> <PLAIN> 13:27:43  0     39004  0      3      524288 "bpftool" "/etc/ld.so.cache"
+<1683984463> <PLAIN> 13:27:43  0     39004  0      3      524288 "bpftool" "/lib/x86_64-linux-gnu/libtinfo.so.6"
+<1683984463> <PLAIN> 13:27:43  0     39004  0      3      524288 "bpftool" "/lib/x86_64-linux-gnu/libdl.so.2"
+<1683984463> <PLAIN> 13:27:43  0     39004  0      3      524288 "bpftool" "/lib/x86_64-linux-gnu/libc.so.6"
+<1683984463> <PLAIN> 13:27:43  0     39004  0      3      2050   "bpftool" "/dev/tty"
+<1683984463> <PLAIN> 13:27:43  0     39004  0      3      524288 "bpftool" "/usr/lib/locale/locale-archive"
+<1683984463> <PLAIN> 13:27:43  0     38999  0      -2     524288 "ecli" "/etc/localtime"
+<1683984463> <PLAIN> 13:27:43  0     38999  0      -2     524288 "ecli" "/etc/timezone"
+```
+
+至此通过docker封装环境依赖，并使用ecli安装ebpf程序成功。
