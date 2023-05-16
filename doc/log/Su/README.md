@@ -69,3 +69,15 @@
 ### 2023-05-15
 
 学习Golang，搭建Golang环境，利用`cobra-cli`脚手架，初始化项目代码框架，并书写[开发指南文档](../../开发指南.md)。该文档后续还需要结合K8S的具体接口进行补充。
+
+### 2023-05-16
+
+书写[Cobra入门](../../note/Su/Cobra.md)文档；
+
+查看[client-go](https://github.com/kubernetes/client-go)，并整理[client-go的接口文档](../../note/Su/client-go.md)；
+
+进一步了解BPF 的CO-RE特性，整理这部分的[文档](../../note/Su/eBPF.md)，并在全新的EC2上验证执行`package.json`不需要其他依赖，可以直接`ecli run`；
+
+查看[kubectl-img](https://github.com/redhatxl/kubectl-img)，了解一个最基础插件的开发。
+
+（在aws的云平台上搭建EKS集群）
