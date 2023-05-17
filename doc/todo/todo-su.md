@@ -39,3 +39,12 @@ eunomia-bpf运行opensnoop.bpf.c
 ##### 5月13日
 
 在docker中使用eunomia-bpf与bpf程序交互
+
+##### 5月17日
+
+构建compile与run分别使用的镜像，编写Dockerfile，验证可以在任意一台有docker引擎的机器编译后分发到另一台有docker引擎的机器执行；
+
+整理client-go文档，编写kubectl-img插件
+
+EKS的集群访问问题
+

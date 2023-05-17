@@ -81,3 +81,13 @@
 查看[kubectl-img](https://github.com/redhatxl/kubectl-img)，了解一个最基础插件的开发。
 
 （在aws的云平台上搭建EKS集群）
+
+### 2023-05-17
+
+根据源码[编译构建ecc](./编译构建ecc.md)，深入理解编译过程与各种依赖
+
+构建runner-pod使用的[compile镜像](./ecc镜像.md)与[run镜像](./ecli镜像.md)
+
+解决fatal: Could not read from remote repository.与No space left on device的问题，见[详情](./问题与解决.md)
+
+整理client-go文档，内容见[代码](../../note/Su/test/client-go)注释
