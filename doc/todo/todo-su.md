@@ -48,3 +48,8 @@ eunomia-bpf运行opensnoop.bpf.c
 
 EKS的集群访问问题
 
+##### 5月18日
+
+解决EKS集群访问问题，成功运行client-go的示例程序
+
+编写并运行kubectl-img插件

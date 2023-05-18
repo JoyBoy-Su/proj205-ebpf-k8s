@@ -186,4 +186,53 @@ ENTRYPOINT ["ecc-rs"]
 
 ```
 
-下面需要为其添加ecc-rs运行时需要用到的所有库。
+下面需要为其添加ecc-rs运行时需要用到的所有库：
+
+经过从裸的Ubuntu镜像测试，ecc-rs编译opensnoop.bpf.c所需要的最小依赖包为：clang + llvm + libelf1
+
+于是修改[Dockerfile](../../containers/Dockerfile.ecc.min)如下：
+
+```dockerfile
+FROM ubuntu:22.04
+
+COPY . /root/.eunomia/bin
+
+ENV PATH="/root/.eunomia/bin:${PATH}"
+
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends \
+        clang llvm libelf1 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /code
+
+ENTRYPOINT ["ecc-rs"]
+
+```
+
+### image构建
+
+先通过二进制下载（wget）或源码编译（见[编译构建ecc](./编译构建ecc.md)）的方式，获取可以在本机上执行的ecc-rs，并在ecc-rs所在目录创建Dockerfile：
+
+```bash
+$ ls -l
+total 29764
+-rw-rw-r-- 1 ubuntu ubuntu      287 May 18 05:41 Dockerfile
+-rwxrwxr-x 1 ubuntu ubuntu 30472288 May 17 18:03 ecc-rs
+```
+
+执行docker命令构建image：
+
+```bash
+$ docker build -t ecc-min:0.1 .
+[+] Building 25.3s (9/9) FINISHED
+$ docker images | grep ecc-min
+ecc-min                      0.1       e403ba56a61e   14 minutes ago   585MB
+```
+
+可以发现镜像大小从之前的3G降低到了500M。
+
+### image执行
+
+与完整版执行一致，将bpf代码映射到`/code`目录下，用docker run传参即可。

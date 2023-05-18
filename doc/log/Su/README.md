@@ -91,3 +91,9 @@
 解决fatal: Could not read from remote repository.与No space left on device的问题，见[详情](./问题与解决.md)
 
 整理client-go文档，内容见[代码](../../note/Su/test/client-go)注释
+
+### 2023-05-18
+
+打包ecc-min镜像，用较小的空间完成编译
+
+利用aws平台的ec2虚拟机，初始化一个master节点，详情见[k8s搭建](./k8s_docker安装搭建.md)

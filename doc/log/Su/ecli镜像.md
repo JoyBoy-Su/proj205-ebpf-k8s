@@ -33,4 +33,3 @@ WORKDIR /code
 
 ENTRYPOINT ["ecli", "run"]
 ```
-
