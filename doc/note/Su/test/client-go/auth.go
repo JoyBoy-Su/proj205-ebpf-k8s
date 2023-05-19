@@ -19,7 +19,7 @@ func main() {
 	if home := homedir.HomeDir(); home != "" {
 		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
 	} else {
-		kubeconfig = flag.String("kubeconfig", "absolute path to the kubeconfig file")
+		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}
 	flag.Parse()
 	// 使用kubeconfig context，获取config
@@ -38,7 +38,7 @@ func main() {
 	fmt.Printf("There are %d pods in the cluster\n", len(pods.Items))
 
 	namespace := "default"
-	pod := "example-xxxxx"
+	pod := "nginx-app-5c64488cdf-g8z42"
 	_, err = clientset.CoreV1().Pods(namespace).Get(context.TODO(), pod, metav1.GetOptions{})
 	if errors.IsNotFound(err) {
 		fmt.Printf("Pod %s in namespace %s not found\n", pod, namespace)

@@ -15,19 +15,25 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 	"k8s.io/client-go/util/retry"
+	//
+	// Uncomment to load all auth plugins
+	// _ "k8s.io/client-go/plugin/pkg/client/auth"
+	//
+	// Or uncomment to load specific auth plugins
+	// _ "k8s.io/client-go/plugin/pkg/client/auth/azure"
+	// _ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
+	// _ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
 )
 
 func main() {
-	// 初始化kubeconfig
 	var kubeconfig *string
-	home := homedir.HomeDir()
-	if home != "" {
+	if home := homedir.HomeDir(); home != "" {
 		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
 	} else {
 		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}
 	flag.Parse()
-	// 获取config 与 client set
+
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
 		panic(err)
@@ -36,13 +42,12 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	// 获取deployments client，以此为入口访问deployment
-	depolymentsClient := clientset.AppsV1().Depolyments(apiv1.NamespaceDefault)
 
-	// 初始化一个deployment （按照yaml资源清单的方式）
-	depolyment := &appsv1.Deployment{
+	deploymentsClient := clientset.AppsV1().Deployments(apiv1.NamespaceDefault)
+
+	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "demo-depolyment",
+			Name: "demo-deployment",
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: int32Ptr(2),
@@ -58,7 +63,7 @@ func main() {
 					},
 				},
 				Spec: apiv1.PodSpec{
-					Containers: []apiv1.Containers{
+					Containers: []apiv1.Container{
 						{
 							Name:  "web",
 							Image: "nginx:1.12",
@@ -75,57 +80,70 @@ func main() {
 			},
 		},
 	}
-	// 调用接口创建deployment
-	fmt.Println("creating deployment")
-	result, err := depolymentsClient.Create(context.TODO(), depolyment, metav1.CreateOptions{})
+
+	// Create Deployment
+	fmt.Println("Creating deployment...")
+	result, err := deploymentsClient.Create(context.TODO(), deployment, metav1.CreateOptions{})
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("Created depolyment %q.\n", result.GetObjectMeta().GetName())
+	fmt.Printf("Created deployment %q.\n", result.GetObjectMeta().GetName())
 
-	// 调用接口更新deployment
+	// Update Deployment
 	prompt()
-	fmt.Println("update deployment")
-	// 更新deployment的两种方式
-	// 1、更新deployment变量，修改其信息，并调用Update(deployment)
-	// 2、调用get得到result，修改result（deployment的另一种形式），retry
+	fmt.Println("Updating deployment...")
+	//    You have two options to Update() this Deployment:
+	//
+	//    1. Modify the "deployment" variable and call: Update(deployment).
+	//       This works like the "kubectl replace" command and it overwrites/loses changes
+	//       made by other clients between you Create() and Update() the object.
+	//    2. Modify the "result" returned by Get() and retry Update(result) until
+	//       you no longer get a conflict error. This way, you can preserve changes made
+	//       by other clients between Create() and Update(). This is implemented below
+	//			 using the retry utility package included with client-go. (RECOMMENDED)
+	//
+	// More Info:
+	// https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+
 	retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		result, getErr := depolymentsClient.Get(context.TODO(), "demo-depolyment", metav1.CetOptions{})
+		// Retrieve the latest version of Deployment before attempting update
+		// RetryOnConflict uses exponential backoff to avoid exhausting the apiserver
+		result, getErr := deploymentsClient.Get(context.TODO(), "demo-deployment", metav1.GetOptions{})
 		if getErr != nil {
-			panic(getErr)
+			panic(fmt.Errorf("Failed to get latest version of Deployment: %v", getErr))
 		}
-		result.Spec.Replicas = int32Ptr(1)                      // 修改replicas
-		result.Spec.Template.Containers[0].Image = "nginx:1.13" // 修改版本
-		_, updateErr := depolymentsClient.Update(context.TODO(), result, metav1.UpdateOptions{})
+
+		result.Spec.Replicas = int32Ptr(1)                           // reduce replica count
+		result.Spec.Template.Spec.Containers[0].Image = "nginx:1.13" // change nginx version
+		_, updateErr := deploymentsClient.Update(context.TODO(), result, metav1.UpdateOptions{})
 		return updateErr
 	})
 	if retryErr != nil {
-		panic(retryErr)
+		panic(fmt.Errorf("Update failed: %v", retryErr))
 	}
-	fmt.Println("Updated deployment")
+	fmt.Println("Updated deployment...")
 
-	// 调用接口，列出所有的deployment
+	// List Deployments
 	prompt()
-	fmt.Printf("Listing depolyments in namespace %q. \n", apiv1.NamespaceDefault)
-	list, err := depolymentsClient.List(context.TODO(), metav1.ListOptions{})
+	fmt.Printf("Listing deployments in namespace %q:\n", apiv1.NamespaceDefault)
+	list, err := deploymentsClient.List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		panic(err)
 	}
-	// 遍历deployment
 	for _, d := range list.Items {
-		fmt.Printf(" * %s (%d replicas) \n", d.Name, *d.Spec.Replicas)
+		fmt.Printf(" * %s (%d replicas)\n", d.Name, *d.Spec.Replicas)
 	}
 
-	// 调用接口删除deployment
+	// Delete Deployment
 	prompt()
-	fmt.Println("delete deployment")
+	fmt.Println("Deleting deployment...")
 	deletePolicy := metav1.DeletePropagationForeground
-	if err := depolymentsClient.Delete(context.TODO(), "demo-deployment", metav1.DeleteOptions{
+	if err := deploymentsClient.Delete(context.TODO(), "demo-deployment", metav1.DeleteOptions{
 		PropagationPolicy: &deletePolicy,
 	}); err != nil {
 		panic(err)
 	}
-	fmt.Println("Deleted deployment")
+	fmt.Println("Deleted deployment.")
 }
 
 func prompt() {
