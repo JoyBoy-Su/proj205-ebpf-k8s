@@ -65,3 +65,38 @@
 ### 2023-05-13
 
 在自己的云服务器（huawei cloud）上，使用docker封装依赖的环境，并用ecli安装bpf程序到宿主机上，过程见[详情](./使用docker结合ecli部署bpf程序.md)；
+
+### 2023-05-15
+
+学习Golang，搭建Golang环境，利用`cobra-cli`脚手架，初始化项目代码框架，并书写[开发指南文档](../../开发指南.md)。该文档后续还需要结合K8S的具体接口进行补充。
+
+### 2023-05-16
+
+书写[Cobra入门](../../note/Su/Cobra.md)文档；
+
+查看[client-go](https://github.com/kubernetes/client-go)，并整理[client-go的接口文档](../../note/Su/client-go.md)；
+
+进一步了解BPF 的CO-RE特性，整理这部分的[文档](../../note/Su/eBPF.md)，并在全新的EC2上验证执行`package.json`不需要其他依赖，可以直接`ecli run`；
+
+查看[kubectl-img](https://github.com/redhatxl/kubectl-img)，了解一个最基础插件的开发。
+
+（在aws的云平台上搭建EKS集群）
+
+### 2023-05-17
+
+根据源码[编译构建ecc](./编译构建ecc.md)，深入理解编译过程与各种依赖
+
+构建runner-pod使用的[compile镜像](./ecc镜像.md)与[run镜像](./ecli镜像.md)
+
+解决fatal: Could not read from remote repository.与No space left on device的问题，见[详情](./问题与解决.md)
+
+整理client-go文档，内容见[代码](../../note/Su/test/client-go)注释
+
+### 2023-05-18
+
+打包ecc-min镜像，用较小的空间完成编译
+
+利用aws平台的ec2虚拟机，初始化一个master节点，详情见[k8s搭建](./k8s_docker安装搭建.md)
+
+### 2023-05-19
+

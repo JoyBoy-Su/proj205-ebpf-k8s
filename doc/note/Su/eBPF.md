@@ -1746,7 +1746,95 @@ $ bpftool prog list
 
 ## 三、eBPF-CO-RE
 
+该部分基于[BPF可移植性与CO-RE](https://facebookmicrosites.github.io/bpf/blog/2020/02/19/bpf-portability-and-co-re.html)
 
+### 移植性问题
+
+简单来说，由于BPF程序要与内核结构交互，它**直接依赖于内核的版本与配置**，但由于内核类型和数据结构在不断变化，不同的机器的内核的内存布局不完全一致，这就导致一台机器上编译好的BPF程序无法直接移植到另一台机器上运行。
+
+过去的解决方法是通过BCC的方式，将BPF的C代码以字符串的形式嵌入python程序，将BPF以C代码的方式分发，到某台具体的机器上后，再由clang/llvm进行编译（BCC内部嵌入了软件包，这使得BCC分发的方式很庞大），确保了 BPF 程序期望的内存布局与目标主机的运行内核完全相同。
+
+存在的问题：
+
+- Clang/LLVM 组合是一个大库，导致分发内容巨大；
+- Clang/LLVM 组合占用大量资源，因此当您在启动时编译 BPF 代码时，您将使用大量资源，可能会破坏精心平衡的生产工作负载；
+- 目标系统不一定具有执行需要的头文件；
+
+### CO-RE机制
+
+CO-RE全称为Compile Once Run Everywhere，旨在实现在一台机器上编译BPF程序，将编译结果直接分发到任一机器便可以执行。它依赖于以下几个部分的组件：
+
+- BTF信息：捕获关于内核和 BPF 程序类型和代码的关键信息；
+- 编译器（Clang）支持：为BPF 程序的C代码提供表达意图和记录重定位信息的手段；（即记录高层的含义）；
+- BPF加载器（libbpf）支持：将来自内核的 BTF 和 BPF 程序联系在一起，加载时进行特殊处理，产生适应于本机的BPF代码；
+
+> 注：个人理解，BPF程序的开发方式按顺序分为如下几个阶段（从高级语言开始）：
+>
+> 1. libbpf库：此时没有CO-RE特性，编译出的内容只能运行在当前机器；
+> 2. bcc：将C代码作为字符串的方式嵌入python，并内置编译运行环境，以python代码的方式分发，具备可以执行，但其实是到特定的机器内核后才开始编译；
+> 3. libbpf + CO-RE特性：libbpf扩展出了CO-RE特性支持，在某一台机器上编译出产物，该产物与第一阶段（libbpf库）的产物不完全相同，此时得到的`.o`会多了一些BTF信息，以供实现CO-RE特性；
+
+#### BTF
+
+BPF CO-RE 特性的关键支持是BTF（BPF Type Format），它是一种调试信息的表示格式，可以描述C程序的所有类型信息。
+
+（至于它的去重算法这种，暂时就不提了，只需要理解一下BTF在CO-RE的特性中是怎么发挥作用的就行）
+
+它会描述C代码的所有类型信息，以及**函数信息**。这里的函数信息没有仔细研究，应该是C代码的高级语句（相对于字节码的高级）的一种表示方式。由于这些信息抽象层次较高，可以**用来还原出原C代码的语义，并将其重新编译成适应具体某一内核的字节码**。
+
+要使用BTF特性（这里的使用应该是说使用系统的BTF从而得到针对该系统的字节码），需要内核开启BTF，即`CONFIG_DEBUG_INFO_BTF=y`选项。
+
+#### 编译器支持
+
+为了启用 BPF CO-RE 并让 BPF 加载程序（即 libbpf）将 BPF 程序调整为在目标主机上运行的特定内核，**Clang 被扩展了**几个内置插件。它们发出**BTF 重定位**，捕获 BPF 程序代码打算读取的信息片段的**高级描述**。例如要访问`task_struct->pid`字段，Clang 会记录它恰好是驻留在`struct task_struct`. 这样做是为了即使目标内核有一个`task_struct`布局，其中“pid”字段被移动到一个不同的偏移量`task_struct`结构（例如，由于在“pid”字段之前添加了额外的字段），或者即使它被移动到一些嵌套的匿名结构或联合中（这在 C 代码中是完全透明的，所以没有人会注意这样的细节） ，我们仍然可以仅通过其名称和类型信息找到它。这称为**字段偏移重定位**。
+
+不仅可以捕获（并随后重新定位）字段偏移量，还可以捕获其他字段方面，例如**字段存在**或**大小**。即使对于位域（这是众所周知的 C 语言中的“不合作”数据类型，抵制使它们可重定位的努力），仍然可以捕获足够的信息以使它们可重定位，所有这些对 BPF 程序开发人员都是透明的。
+
+简单来说，Clang在编译的过程中，借助BTF的格式，以一种简单的方式保存了BPF程序的高级描述，这些描述会放在编译出的ELF格式文件中，以`.BTF`段和`.BTF.ext`段的形式存在。
+
+有一个实例，对`hello_kern.c`的编译，对比未扩展和扩展后的Clang编译的结果：
+
+```bash
+$ llvm-objdump -h hello_kern.o 									# 未扩展，共7个section
+
+hello_kern.o:   file format elf64-bpf
+
+Sections:
+Idx Name                         Size     VMA              Type
+  0                              00000000 0000000000000000 
+  1 .strtab                      00000073 0000000000000000 
+  2 .text                        00000000 0000000000000000 TEXT
+  3 tp/syscalls/sys_enter_openat 00000068 0000000000000000 TEXT
+  4 .rodata.str1.1               0000000e 0000000000000000 DATA
+  5 license                      00000004 0000000000000000 DATA
+  6 .llvm_addrsig                00000002 0000000000000000 
+  7 .symtab                      00000060 0000000000000000
+  
+$ llvm-objdump -h hello_kern.bpf.o 								# 扩展后的，共11个section
+
+hello_kern.bpf.o:       file format elf64-bpf
+
+Sections:
+Idx Name                         Size     VMA              Type
+  0                              00000000 0000000000000000 
+  1 .strtab                      0000007c 0000000000000000 
+  2 .text                        00000000 0000000000000000 TEXT
+  3 tp/syscalls/sys_enter_openat 00000068 0000000000000000 TEXT
+  4 .rodata.str1.1               0000000e 0000000000000000 DATA
+  5 license                      00000004 0000000000000000 DATA
+  6 .BTF                         000001c5 0000000000000000 		# .BTF section 类型信息
+  7 .rel.BTF                     00000010 0000000000000000 
+  8 .BTF.ext                     00000090 0000000000000000 		# .BTF.ext section 函数信息
+  9 .rel.BTF.ext                 00000060 0000000000000000 
+ 10 .llvm_addrsig                00000002 0000000000000000 
+ 11 .symtab                      00000060 0000000000000000
+```
+
+对比得到后者明显多了和BTF相关的section，这些section会在加载时被加载器使用，从而生成针对特定内核的可执行代码（实现CO-RE的特性）。
+
+#### 加载器支持
+
+加载器的输入是一个ELF格式文件，包含了BTF信息与Clang处理的信息（重定位等等），这些信息会被加载器使用，针对特定的主机**定制**BPF代码。libbpf查看 BPF 程序记录的 BTF 类型和重定位信息，并将它们与运行内核提供的BTF信息相匹配（后者需要运行内核开启BTF），它解析并匹配所有类型和字段，根据需要**更新必要的偏移量和其他可重定位数据**，以确保 BPF 程序的逻辑针对主机上的特定内核正确运行。到这里，分发到特定机器上的BPF程序已经被定制为了一个可执行的版本，实现了CO-RE特性。
 
 ## X、eBPF的一些原理
 
@@ -1765,3 +1853,5 @@ eBPF开发参考项目：[官方入门Lab](https://play.instruqt.com/embed/isova
 Linux源码：[linux kernel](https://www.kernel.org/)（看的是6.0版本）
 
 Linux man page：[bpf-helpers](https://man7.org/linux/man-pages/man7/bpf-helpers.7.html)
+
+eBPF CO-RE特性介绍：[BPF可移植性与CO-RE](https://facebookmicrosites.github.io/bpf/blog/2020/02/19/bpf-portability-and-co-re.html)
