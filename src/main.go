@@ -19,6 +19,7 @@ import "fudan.edu.cn/swz/bpf/cmd"
 
 func main() {
 	cmd.Execute()
+	
 	// fmt.Println("Test ClientSet:")
 	// test.TestClientSet()
 	// fmt.Println("Test DeploymentClient:")
