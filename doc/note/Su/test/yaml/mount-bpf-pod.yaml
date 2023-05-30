@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mount-bpf
+spec:
+  restartPolicy: OnFailure
+  volumes:
+    - name: bpf-src-volume
+      configMap:
+        name: bpf-src		# 从config Map创建pod的共享卷
+  containers:
+  - name: mount-bpf
+    image: ubuntu:22.04
+    command: ["/bin/sh", "-c", "cat /bpf/opensnoop.h"]
+    volumeMounts:
+    - name: bpf-src-volume
+      mountPath: /bpf	    # 将pod的共享卷挂在到docker的/etc/config下
