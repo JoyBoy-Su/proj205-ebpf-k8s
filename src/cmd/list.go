@@ -34,12 +34,12 @@ var listCmd = &cobra.Command{
 		// 获取client set
 		clientset := kube.ClientSet()
 		// 读取BPF_HOME目录，得到所有的bpf_name
-		files := bpf.ListBPF()
+		files := bpf.InstList()
 		// 遍历files 处理每个bpf的信息
 		fmt.Println("BPF\tNODE\tSTART\tSRC")
 		podclient := clientset.CoreV1().Pods(apiv1.NamespaceDefault)
 		for _, bpf_name := range files {
-			pod_name, src_name := bpf.ReadBPF(bpf_name)
+			pod_name, src_name := bpf.InstRead(bpf_name)
 			pod, err := podclient.Get(context.TODO(), pod_name, metav1.GetOptions{})
 			if err != nil {
 				panic(err)

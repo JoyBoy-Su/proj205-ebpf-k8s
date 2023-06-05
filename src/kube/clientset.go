@@ -10,7 +10,7 @@ import (
 	"k8s.io/client-go/util/homedir"
 )
 
-func ClientSet() *kubernetes.Clientset {
+func getClientSet() *kubernetes.Clientset {
 	var kubeconfig *string
 	home := homedir.HomeDir()
 	if home != "" {
@@ -30,5 +30,11 @@ func ClientSet() *kubernetes.Clientset {
 		fmt.Printf("kubernetes.NewForConfig error:\n")
 		fmt.Printf("err: %v\n", err)
 	}
+	return clientset
+}
+
+var clientset *kubernetes.Clientset = getClientSet()
+
+func ClientSet() *kubernetes.Clientset {
 	return clientset
 }

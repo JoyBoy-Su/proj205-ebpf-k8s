@@ -17,18 +17,11 @@ limitations under the License.
 package cmd
 
 import (
-	"context"
-	"os/exec"
-
 	"fmt"
 	"os"
 
 	"fudan.edu.cn/swz/bpf/bpf"
-	"fudan.edu.cn/swz/bpf/kube"
 	"github.com/spf13/cobra"
-	batchv1 "k8s.io/api/batch/v1"
-	apiv1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 /**
@@ -46,33 +39,6 @@ import (
  * 2、去除hard code，且避免job的name重名
  */
 
-func parse(cmd *cobra.Command, args []string) ([]string, string) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		panic(err)
-	}
-	var src []string
-	for _, value := range args {
-		src = append(src, cwd + "/" + value)
-	}
-	name, err := cmd.Flags().GetString("bpfname")
-	if err != nil {
-		panic(err)
-	}
-	return src, name
-}
-
-func exist(pathname string) (bool, error) {
-	_, err := os.Stat(pathname)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, err
-}
-
 // runCmd represents the run command
 var runCmd = &cobra.Command{
 	Use:   "run",
@@ -83,162 +49,21 @@ var runCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("run called")
 		// 获取src和name
-		bpf_src, bpf_name := parse(cmd, args)
-		// 校验name是否已存在
-		exist, err := exist(bpf.BPF_HOME + bpf_name)
+		inst_name, err := cmd.Flags().GetString("bpfname")
 		if err != nil {
 			panic(err)
 		}
-		if exist {
-			fmt.Println("Name already exists")
-			return
-		}
-		// 获取client set，与k8s集群交互
-		clientset := kube.ClientSet()
 		// 获取当前目录，用来挂载到compiler中
 		exePath, err := os.Getwd()
 		if err != nil {
 			panic(err)
 		}
-		// 设置Job的资源清单
-		jobs := clientset.BatchV1().Jobs(apiv1.NamespaceDefault)
-		var completions int32 = 1
-		var hostpathdirectory apiv1.HostPathType = apiv1.HostPathDirectory
-		var ttlSecondsAfterFinished int32 = 5
-		jobSpec := &batchv1.Job{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Job",
-				APIVersion: "batch/v1",
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "compile-bpf-job",
-				Namespace: bpf.BPF_NAMESPACE,
-			},
-			Spec: batchv1.JobSpec{
-				Completions:             &completions,
-				TTLSecondsAfterFinished: &ttlSecondsAfterFinished,
-				Template: apiv1.PodTemplateSpec{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "compile-bpf",
-						Namespace: bpf.BPF_NAMESPACE,
-					},
-					Spec: apiv1.PodSpec{
-						RestartPolicy: apiv1.RestartPolicyOnFailure,
-						Tolerations: []apiv1.Toleration{
-							{
-								Key:    "node-role.kubernetes.io/master",
-								Effect: apiv1.TaintEffectNoSchedule,
-							},
-						},
-						NodeName: "master",
-						Volumes: []apiv1.Volume{
-							{
-								Name: "bpf-src-volume",
-								VolumeSource: apiv1.VolumeSource{
-									HostPath: &apiv1.HostPathVolumeSource{
-										Path: exePath,
-										Type: &hostpathdirectory,
-									},
-								},
-							},
-						},
-						Containers: []apiv1.Container{
-							{
-								Name:  "compile-bpf",
-								Image: "jiadisu/ecc-min-ubuntu-x86:0.1",
-								Args:  args,
-								VolumeMounts: []apiv1.VolumeMount{
-									{
-										Name:      "bpf-src-volume",
-										MountPath: "/code",
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		}
-		// 创建Job
-		fmt.Println("Creating Job...")
-		result, err := jobs.Create(context.TODO(), jobSpec, metav1.CreateOptions{})
-		if err != nil {
-			panic(err)
-		}
-		fmt.Printf("Created Job %q   and compile.\n", result.GetObjectMeta().GetName())
-
+		// 编译
+		package_name := bpf.Compile(bpf.BPF_EMPTY_PACKAGE_NAME, exePath, args)
 		// 创建configMap，通过cmd的方式
-		param := "--from-file=" + exePath
-		command := exec.Command("kubectl", "create", "cm", "bpf-package", param)
-		command.Run()
-		// 设置runner-pod的资源清单
-		run_pod := clientset.CoreV1().Pods(apiv1.NamespaceDefault)
-		var allowPrivilegeEscalation bool = true
-		var privileged bool = true
-		run_pod_Spec := &apiv1.Pod{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "Pod",
-				APIVersion: "v1",
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "bpf-runner-pod",
-			},
-			Spec: apiv1.PodSpec{
-				Containers: []apiv1.Container{
-					{
-						Name:    "bpf-runner-container",
-						Image:   "ngccc/ecli_x86_ubuntu",
-						Command: []string{"/bin/sh", "-c", "./ecli run /var/ebpfPackage/package.json"},
-						VolumeMounts: []apiv1.VolumeMount{
-							{
-								Name:      "logs",
-								MountPath: "/sys/kernel/debug",
-							},
-							{
-								Name:      "bpf-package",
-								MountPath: "/var/ebpfPackage/",
-							},
-						},
-						SecurityContext: &apiv1.SecurityContext{
-							AllowPrivilegeEscalation: &allowPrivilegeEscalation,
-							Privileged:               &privileged,
-						},
-					},
-				},
-				Volumes: []apiv1.Volume{
-					{
-						Name: "logs",
-						VolumeSource: apiv1.VolumeSource{
-							HostPath: &apiv1.HostPathVolumeSource{
-								Path: "/sys/kernel/debug",
-								Type: &hostpathdirectory,
-							},
-						},
-					},
-					{
-						Name: "bpf-package",
-						VolumeSource: apiv1.VolumeSource{
-							ConfigMap: &apiv1.ConfigMapVolumeSource{
-								LocalObjectReference: apiv1.LocalObjectReference{
-									Name: "bpf-package",
-								},
-							},
-						},
-					},
-				},
-			},
-		}
-		// 创建Pod
-		fmt.Println("Creating Pod...")
-		pod_result, err := run_pod.Create(context.Background(), run_pod_Spec, metav1.CreateOptions{})
-		if err != nil {
-			panic(err)
-		}
-		fmt.Printf("Created Pod %q   and run.\n", pod_result.GetObjectMeta().GetName())
-		// 获取Pod的name
-		pod_name := pod_result.GetName()
-		// 创建bpf_name目录，并设置pod文件和src文件
-		bpf.AddBPF(bpf_name, pod_name, bpf_src)
+		bpf.MountPackageByConfigMap(package_name)
+		// 运行
+		bpf.Run(inst_name, package_name)
 		fmt.Println("Bpf program run successfully")
 	},
 }

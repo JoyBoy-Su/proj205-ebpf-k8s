@@ -44,8 +44,8 @@ var deleteCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		clientset := kube.ClientSet()
 		bpf_name := args[0]
-		var dir string = bpf.BPF_HOME + bpf_name
-		pod_name, err := os.ReadFile(dir + "/" + bpf.POD_FILE)
+		var dir string = bpf.BPF_INST_HOME + bpf_name
+		pod_name, err := os.ReadFile(dir + "/" + bpf.POD_FILE_NAME)
 		var podName string = string(pod_name)
 		if err != nil {
 			panic(err)
