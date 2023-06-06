@@ -4,8 +4,10 @@ import (
 	"io"
 	"os"
 	"path"
+	"strings"
 )
 
+// 根据package添加一个与之对应的inst到文件管理中
 func InstAdd(inst_name string, package_name string) {
 	dirpath := BPF_INST_HOME + inst_name
 	err := os.Mkdir(dirpath, 0777)
@@ -19,35 +21,53 @@ func InstAdd(inst_name string, package_name string) {
 	if err != nil {
 		panic(err)
 	}
-}
-
-func InstRead(bpf_name string) (string, string) {
-	var dir string = BPF_INST_HOME + bpf_name
-	// read pod
-	pod_content, err := os.ReadFile(dir + "/" + POD_FILE_NAME)
-	var pod_name string = string(pod_content)
+	// 在package的instance中添加一个软链接
+	src = BPF_INST_HOME + inst_name
+	dst = BPF_PACKAGE_HOME + package_name + "/" + INSTANCE_DIR_NAME + "/" + inst_name
+	err = os.Symlink(src, dst)
 	if err != nil {
 		panic(err)
 	}
-	// read src
-	src_content, err := os.ReadFile(dir + "/" + SRC_FILE_NAME)
-	var src_name string = string(src_content)
+}
+
+// 根据inst查找与之对应的信息：这里只包括可以通过文件读到的pacakge name和src list
+func InstRead(inst_name string, inst_info *InstInfo) {
+	// 待返回的对象
+	inst_info.inst_name = inst_name
+	var inst_dir string = BPF_INST_HOME + inst_name
+	var package_dir string = inst_dir + "/" + PACKAGE_FILE_NAME
+	// 解析软链接，读取package_name
+	link_info, err := os.Lstat(package_dir)
 	if err != nil {
 		panic(err)
 	}
-	return pod_name, src_name
+	if link_info.Mode()&os.ModeSymlink != 0 {
+		package_path, err := os.Readlink(package_dir)
+		if err != nil {
+			panic(err)
+		}
+		inst_info.package_name = path.Base(package_path)
+	}
+	// 通过package_name读取src
+	src_content, err := os.ReadFile(package_dir + "/" + SRC_FILE_NAME)
+	if err != nil {
+		panic(err)
+	}
+	var src_str string = string(src_content)
+	inst_info.src_list = strings.Split(src_str, INFO_SEPARATOR)[1:]
 }
 
+// 读取dir获取所有inst的name
 func InstList() []string {
-	var bpfs []string
+	var insts []string
 	files, err := os.ReadDir(BPF_INST_HOME)
 	if err != nil {
 		panic(err)
 	}
-	for _, bpf_name := range files {
-		bpfs = append(bpfs, bpf_name.Name())
+	for _, inst_file := range files {
+		insts = append(insts, inst_file.Name())
 	}
-	return bpfs
+	return insts
 }
 
 // 校验bpf name是否可用
@@ -63,6 +83,28 @@ func InstExist(name string) (bool, error) {
 	return false, err
 }
 
+// 根据inst的name删除inst
+func InstDelete(inst_name string) {
+	// 获取package name
+	var inst_dir string = BPF_INST_HOME + inst_name
+	var package_dir string = inst_dir + "/" + PACKAGE_FILE_NAME
+	// 解析软链接，读取package_name
+	link_info, err := os.Lstat(package_dir)
+	if err != nil {
+		panic(err)
+	}
+	if link_info.Mode()&os.ModeSymlink != 0 {
+		package_path, err := os.Readlink(package_dir)
+		if err != nil {
+			panic(err)
+		}
+		// 删除pacakge中对应该inst的软链接
+		os.Remove(package_path + "/" + INSTANCE_DIR_NAME + "/" + inst_name)
+	}
+	// 删除inst的文件信息
+	os.RemoveAll(inst_dir)
+}
+
 // 创建package目录，管理package对应的信息
 func PackageCreate(package_name string) {
 	dirpath := BPF_PACKAGE_HOME + package_name
@@ -75,6 +117,10 @@ func PackageCreate(package_name string) {
 		panic(err)
 	}
 	err = os.Mkdir(dirpath+"/"+DATA_DIR_NAME, 0777)
+	if err != nil {
+		panic(err)
+	}
+	os.Mkdir(dirpath+"/"+INSTANCE_DIR_NAME, 0777)
 	if err != nil {
 		panic(err)
 	}

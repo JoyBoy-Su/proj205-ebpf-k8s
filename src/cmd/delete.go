@@ -16,24 +16,9 @@ limitations under the License.
 package cmd
 
 import (
-	"context"
-	"os"
-
 	"fudan.edu.cn/swz/bpf/bpf"
 	"fudan.edu.cn/swz/bpf/kube"
 	"github.com/spf13/cobra"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-)
-
-var (
-	// 后台删除，不夯前台，提升删除速度
-	deletePolicy metav1.DeletionPropagation = "Background"
-	// 立即删除
-	gracetime     int64                = 0
-	deleteOptions metav1.DeleteOptions = metav1.DeleteOptions{
-		PropagationPolicy:  &deletePolicy,
-		GracePeriodSeconds: &gracetime,
-	}
 )
 
 // deleteCmd represents the delete command
@@ -42,18 +27,12 @@ var deleteCmd = &cobra.Command{
 	Short: "delete bpf by bpfname",
 	Args:  cobra.MatchAll(cobra.MinimumNArgs(1), cobra.OnlyValidArgs),
 	Run: func(cmd *cobra.Command, args []string) {
-		clientset := kube.ClientSet()
-		bpf_name := args[0]
-		var dir string = bpf.BPF_INST_HOME + bpf_name
-		pod_name, err := os.ReadFile(dir + "/" + bpf.POD_FILE_NAME)
-		var podName string = string(pod_name)
-		if err != nil {
-			panic(err)
-		}
+		inst_name := args[0]
+		pod_name := inst_name
 		// 不处理异常反而不报错
-		clientset.CoreV1().Pods(bpf.BPF_NAMESPACE).Delete(context.TODO(), podName, deleteOptions)
-		// 删除文件夹
-		os.RemoveAll(dir)
+		kube.PodDelete(bpf.BPF_NAMESPACE, pod_name)
+		// 删除bpf的管理信息
+		bpf.InstDelete(inst_name)
 	},
 }
 
