@@ -5,6 +5,8 @@ var BPF_INST_HOME string = BPF_HOME + "instances/"
 var BPF_PACKAGE_HOME string = BPF_HOME + "packages/"
 
 var BPF_EMPTY_PACKAGE_NAME = ""
+var BPF_EMPTY_INSTANCE_NAME = ""
+var BPF_EMPTY_NODE_NAME = ""
 var POD_FILE_NAME string = "pod"
 var SRC_FILE_NAME string = "src"
 var DATA_DIR_NAME string = "data"

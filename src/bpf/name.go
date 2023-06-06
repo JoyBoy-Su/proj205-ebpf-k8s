@@ -26,5 +26,5 @@ func instanceName(inst_name string, serial bool) string {
 		return inst_name
 	}
 	// 添加serial number
-	return inst_name + "-" + uuid.NewString()
+	return inst_name + uuid.NewString()
 }
