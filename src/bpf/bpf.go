@@ -2,6 +2,7 @@ package bpf
 
 import (
 	"fmt"
+	"os"
 
 	"fudan.edu.cn/swz/bpf/kube"
 	batchv1 "k8s.io/api/batch/v1"
@@ -26,6 +27,10 @@ func Compile(package_name string, base_path string, files_list []string) string 
 	var ttlSecondsAfterFinished int32 = 5
 	var backoffLimit int32 = 1
 	var name = package_name
+	hostname, err := os.Hostname()
+	if err != nil {
+		panic(err)
+	}
 	jobSpec := &batchv1.Job{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Job",
@@ -52,7 +57,7 @@ func Compile(package_name string, base_path string, files_list []string) string 
 							Effect: apiv1.TaintEffectNoSchedule,
 						},
 					},
-					NodeName: "master",
+					NodeName: hostname,
 					Volumes: []apiv1.Volume{
 						{
 							Name: "bpf-data",

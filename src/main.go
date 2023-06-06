@@ -15,8 +15,17 @@ limitations under the License.
 */
 package main
 
-import "fudan.edu.cn/swz/bpf/cmd"
+import (
+	"fmt"
+
+	"fudan.edu.cn/swz/bpf/cmd"
+	"fudan.edu.cn/swz/bpf/kube"
+)
 
 func main() {
+	if !kube.NodeIsMaster() {
+		fmt.Println("The current node is not a control-plane and cannot execute the bpf command")
+		return
+	}
 	cmd.Execute()
 }

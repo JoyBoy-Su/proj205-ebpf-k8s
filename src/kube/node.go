@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"math/rand"
+	"os"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,4 +35,20 @@ func LoadNodeRandom() string {
 	// rand.Intn(n): [0, n)
 	index := rand.Intn(len(nodes))
 	return nodes[index]
+}
+
+func NodeIsMaster() bool {
+	// 获取host
+	host, err := os.Hostname()
+	if err != nil {
+		panic(err)
+	}
+	clientset := ClientSet()
+	node_client := clientset.CoreV1().Nodes()
+	node, err := node_client.Get(context.TODO(), host, metav1.GetOptions{})
+	if err != nil {
+		panic(err)
+	}
+	_, ok := node.Labels[control_plane_key]
+	return ok
 }
