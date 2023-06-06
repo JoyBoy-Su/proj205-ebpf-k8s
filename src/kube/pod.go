@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 
 	apiv1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
@@ -27,19 +28,16 @@ var (
 func PodCreate(namespace string, podSpec *apiv1.Pod) {
 	clientset := ClientSet()
 	pods := clientset.CoreV1().Pods(namespace)
-	fmt.Println("Creating Pod...")
-	pod_result, err := pods.Create(context.Background(), podSpec, metav1.CreateOptions{})
+	_, err := pods.Create(context.Background(), podSpec, metav1.CreateOptions{})
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("Created Pod %q .\n", pod_result.GetObjectMeta().GetName())
 }
 
 func PodDelete(namespace string, pod_name string) {
 	clientset := ClientSet()
 	pods := clientset.CoreV1().Pods(namespace)
 	pods.Delete(context.TODO(), pod_name, deleteOptions)
-	fmt.Printf("Delete Pod %q .\n", pod_name)
 }
 
 func GetPodLog(namespace, podname string) {
@@ -86,8 +84,26 @@ func FllowLog(namespace, podname string) {
 	}
 }
 
-func PodStatus(namespace, podname string) *v1.Pod {
+func PodCreateTime(namespace string, name string) metav1.Time {
+	clientset := ClientSet()
+	pod, _ := clientset.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+	return pod.GetCreationTimestamp()
+}
+
+func PodStatus(namespace, podname string) string {
 	clientset := ClientSet()
 	pod, _ := clientset.CoreV1().Pods(namespace).Get(context.TODO(), podname, metav1.GetOptions{})
-	return pod
+	return string(pod.Status.Phase)
+}
+
+func PodFailed(namespace string, name string) bool {
+	clientset := ClientSet()
+	pod, _ := clientset.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+	return strings.Compare(string(pod.Status.Phase), "Failed") == 0
+}
+
+func PodRunning(namespace string, name string) bool {
+	clientset := ClientSet()
+	pod, _ := clientset.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+	return strings.Compare(string(pod.Status.Phase), "Running") == 0
 }

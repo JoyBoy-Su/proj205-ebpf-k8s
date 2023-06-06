@@ -1,6 +1,12 @@
 package bpf
 
-var BPF_HOME string = "/home/ubuntu/.kube/bpf/"
+import (
+	"path/filepath"
+
+	"k8s.io/client-go/util/homedir"
+)
+
+var BPF_HOME string = filepath.Join(homedir.HomeDir(), ".kube", "bpf") + "/"
 var BPF_INST_HOME string = BPF_HOME + "instances/"
 var BPF_PACKAGE_HOME string = BPF_HOME + "packages/"
 
@@ -15,7 +21,7 @@ var INSTANCE_DIR_NAME string = "instance"
 
 var INFO_SEPARATOR string = ":"
 
-var BPF_NAMESPACE string = "default"
+var BPF_NAMESPACE string = "bpf"
 var CompileImage string = "jiadisu/ecc-min-ubuntu-x86:0.1"
 var CompileMountPath string = "/code"
 var RunImage string = "ngccc/ecli_x86_ubuntu"

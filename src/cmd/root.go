@@ -28,8 +28,6 @@ var rootCmd = &cobra.Command{
 	Short: "A kubectl plug-in for easy distribution and deployment of ebpf procedures",
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println(cmd.Short)
-		namespace, _ := cmd.PersistentFlags().GetString("namespace")
-		fmt.Printf("namespace: %s\n", namespace)
 	},
 }
 

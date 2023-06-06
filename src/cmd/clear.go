@@ -16,19 +16,35 @@ limitations under the License.
 package cmd
 
 import (
+	"errors"
 	"fmt"
 
 	"fudan.edu.cn/swz/bpf/bpf"
+	"fudan.edu.cn/swz/bpf/kube"
 	"github.com/spf13/cobra"
 )
 
+// 删除指定的package
 // clearCmd represents the clear command
 var clearCmd = &cobra.Command{
 	Use:   "clear",
 	Short: "clear the cache of the package",
-	Args:  cobra.MatchAll(cobra.MinimumNArgs(1), cobra.OnlyValidArgs),
+	Args: func(cmd *cobra.Command, args []string) error {
+		// 若指定了all直接通过校验
+		all, err := cmd.Flags().GetBool("all")
+		if err != nil {
+			panic(err)
+		}
+		if all {
+			return nil
+		}
+		// 若未指定package则校验args的个数
+		if len(args) < 1 {
+			return errors.New("requires at least one arg to specifies the source code to be compiled")
+		}
+		return nil
+	},
 	Run: func(cmd *cobra.Command, args []string) {
-		// 循环处理所有的package
 		force, err := cmd.Flags().GetBool("force")
 		if err != nil {
 			panic(err)
@@ -44,7 +60,9 @@ var clearCmd = &cobra.Command{
 		} else {
 			packages = args
 		}
+		// 循环处理所有的package
 		for _, package_name := range packages {
+			// 若不存在则跳过
 			exist, err := bpf.PackageExist(package_name)
 			if err != nil {
 				panic(err)
@@ -52,7 +70,9 @@ var clearCmd = &cobra.Command{
 			if !exist {
 				fmt.Printf("package %s not exist\n", package_name)
 			} else {
-				// 删除对应的package
+				// 删除对应的config
+				kube.ConfigMapDelete(package_name, bpf.BPF_NAMESPACE)
+				// 删除对应的package文件管理部分
 				bpf.PackageDelete(package_name, force)
 			}
 		}

@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// 显示所有的package
 // packagesCmd represents the packages command
 var packagesCmd = &cobra.Command{
 	Use:   "packages",
@@ -32,7 +33,10 @@ var packagesCmd = &cobra.Command{
 		var package_info bpf.PackageInfo
 		for _, package_name := range packages {
 			bpf.PackageRead(package_name, &package_info)
-			fmt.Printf("%s\t%q\t%q\n", package_name, bpf.PackageInfoGetSrcList(&package_info), bpf.PackageInfoGetInstList(&package_info))
+			fmt.Printf("%s\t%q\t%q\t%d\n", package_name,
+				bpf.PackageInfoGetSrcList(&package_info),
+				bpf.PackageInfoGetInstList(&package_info),
+				bpf.PackageInfoGetSize(&package_info))
 		}
 	},
 }

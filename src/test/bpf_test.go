@@ -56,9 +56,13 @@ import (
 // 	t.Logf("package_inst_list: %q\n", bpf.PackageInfoGetInstList(&package_info))
 // }
 
-func TestReadSrc(t *testing.T) {
-	package_name := "2a9d4745-3555-4912-9863-bf373ee69b28"
-	src_name := "opensnoop.h"
-	content := bpf.SrcRead(package_name, src_name)
-	t.Logf("%s", content)
+// func TestReadSrc(t *testing.T) {
+// 	package_name := "2a9d4745-3555-4912-9863-bf373ee69b28"
+// 	src_name := "opensnoop.h"
+// 	content := bpf.SrcRead(package_name, src_name)
+// 	t.Logf("%s", content)
+// }
+
+func TestBPFHome(t *testing.T) {
+	t.Logf("bpf home: %s", bpf.BPF_HOME)
 }

@@ -18,7 +18,6 @@ package cmd
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 
@@ -83,6 +82,10 @@ var runCmd = &cobra.Command{
 		}
 		if strings.Compare(package_name, bpf.BPF_EMPTY_PACKAGE_NAME) == 0 {
 			package_name = compile(args)
+			// 编译失败
+			if strings.Compare(bpf.BPF_EMPTY_PACKAGE_NAME, package_name) == 0 {
+				return
+			}
 			// 创建configMap
 			bpf.MountPackageByConfigMap(package_name)
 		}
@@ -101,12 +104,10 @@ var runCmd = &cobra.Command{
 				bpf.Run(inst_name, package_name, node, true)
 			}
 		} else if strings.Compare(node, bpf.BPF_EMPTY_NODE_NAME) != 0 {
-			fmt.Println("node")
 			bpf.Run(inst_name, package_name, node, false)
 		} else {
 			bpf.Run(inst_name, package_name, kube.LoadNodeRandom(), false)
 		}
-		fmt.Println("Bpf program run successfully")
 	},
 }
 

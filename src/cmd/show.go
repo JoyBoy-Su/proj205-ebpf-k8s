@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// 展示指定package的详细信息
 // showCmd represents the show command
 var showCmd = &cobra.Command{
 	Use:   "show",
@@ -47,6 +48,7 @@ var showCmd = &cobra.Command{
 		// 逐项显示
 		fmt.Printf("Name: %s\n", package_name)
 		fmt.Printf("InstList: %q\n", bpf.PackageInfoGetInstList(&package_info))
+		fmt.Printf("Size: %d\n", bpf.PackageInfoGetSize(&package_info))
 		fmt.Printf("SrcList: %q\n", bpf.PackageInfoGetSrcList(&package_info))
 		for _, src_name := range bpf.PackageInfoGetSrcList(&package_info) {
 			fmt.Printf("========== %s ==========\n", src_name)

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path"
 	"strings"
+
+	"fudan.edu.cn/swz/bpf/kube"
 )
 
 // 根据package添加一个与之对应的inst到文件管理中
@@ -243,14 +245,13 @@ func PackageDelete(package_name string, force bool) {
 	if len(inst_dir) != 0 {
 		// 非强制删除
 		if !force {
-			err := fmt.Errorf("there are instances that depend on package: %s", package_name)
-			if err != nil {
-				panic(err)
-			}
+			fmt.Printf("there are instances that depend on package: %s\n", package_name)
 			return
 		}
 		// 强制删除instance
 		for _, inst_file := range inst_dir {
+			// 删除对应pod
+			kube.PodDelete(BPF_NAMESPACE, inst_file.Name())
 			InstDelete(inst_file.Name())
 		}
 	}
