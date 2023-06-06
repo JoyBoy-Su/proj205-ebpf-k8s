@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"fudan.edu.cn/swz/bpf/bpf"
+	"fudan.edu.cn/swz/bpf/kube"
 	"github.com/spf13/cobra"
 )
 
@@ -30,7 +31,7 @@ var listCmd = &cobra.Command{
 		// 获取client set
 		// clientset := kube.ClientSet()
 		// 读取BPF_HOME目录，得到所有的bpf_name
-		fmt.Println("INST\tPACKAGE\tSRC_LIST")
+		fmt.Println("INST\tPACKAGE\tSRC_LIST\tCEATTED")
 		insts := bpf.InstList()
 		var inst_info bpf.InstInfo
 		for _, inst_name := range insts {
@@ -38,7 +39,14 @@ var listCmd = &cobra.Command{
 			// 遍历files 处理每个bpf的信息
 			bpf.InstRead(inst_name, &inst_info)
 			// 输出
-			fmt.Printf("%s\t%s\t%q\t\n", inst_name, bpf.InstInfoGetPackageName(&inst_info), bpf.InstInfoGetSrcList(&inst_info))
+			pod := kube.PodStatus("default", inst_name)
+			fmt.Printf("%s\t %s\t %q\t %q\n",
+				inst_name,
+				bpf.InstInfoGetPackageName(&inst_info),
+				bpf.InstInfoGetSrcList(&inst_info),
+				pod.GetCreationTimestamp(),
+			)
+
 		}
 	},
 }

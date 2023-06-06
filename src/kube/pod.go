@@ -85,3 +85,9 @@ func FllowLog(namespace, podname string) {
 		fmt.Printf("%s", string(outputBytes[0:bytes]))
 	}
 }
+
+func PodStatus(namespace, podname string) *v1.Pod {
+	clientset := ClientSet()
+	pod, _ := clientset.CoreV1().Pods(namespace).Get(context.TODO(), podname, metav1.GetOptions{})
+	return pod
+}
