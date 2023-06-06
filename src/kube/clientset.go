@@ -33,8 +33,11 @@ func getClientSet() *kubernetes.Clientset {
 	return clientset
 }
 
-var clientset *kubernetes.Clientset = getClientSet()
+var clientset *kubernetes.Clientset
 
 func ClientSet() *kubernetes.Clientset {
+	if clientset == nil {
+		clientset = getClientSet()
+	}
 	return clientset
 }
