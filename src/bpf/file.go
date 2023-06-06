@@ -1,6 +1,7 @@
 package bpf
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -206,14 +207,114 @@ func PackageAddSrcList(package_name string, base_path string, files_list []strin
 	}
 }
 
-func DeletePackage() {
-
+func PackageExist(package_name string) (bool, error) {
+	pathname := BPF_PACKAGE_HOME + package_name
+	_, err := os.Stat(pathname)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
-func ListPackage() {
-
+// 删除package
+func PackageDelete(package_name string, force bool) {
+	// 先判断是否存在
+	exist, err := PackageExist(package_name)
+	if err != nil {
+		panic(err)
+	}
+	if !exist {
+		err := fmt.Errorf("package %s not exist", package_name)
+		if err != nil {
+			panic(err)
+		}
+		return
+	}
+	// 存在则先检查与package相关的instance
+	instance_path := BPF_PACKAGE_HOME + package_name + "/" + INSTANCE_DIR_NAME
+	inst_dir, err := os.ReadDir(instance_path)
+	if err != nil {
+		panic(err)
+	}
+	// 若存在instance
+	if len(inst_dir) != 0 {
+		// 非强制删除
+		if !force {
+			err := fmt.Errorf("there are instances that depend on package: %s", package_name)
+			if err != nil {
+				panic(err)
+			}
+			return
+		}
+		// 强制删除instance
+		for _, inst_file := range inst_dir {
+			InstDelete(inst_file.Name())
+		}
+	}
+	// 删除package的文件夹
+	os.RemoveAll(BPF_PACKAGE_HOME + package_name)
 }
 
-func ReadPackage() {
+// 列出当前所有的package
+func PackageList() []string {
+	var packages []string
+	files, err := os.ReadDir(BPF_PACKAGE_HOME)
+	if err != nil {
+		panic(err)
+	}
+	for _, package_file := range files {
+		packages = append(packages, package_file.Name())
+	}
+	return packages
+}
 
+// 读取package的信息
+func PackageRead(package_name string, package_info *PackageInfo) {
+	package_info.package_name = package_name
+	// 读取src list(file)
+	src_path := BPF_PACKAGE_HOME + package_name + "/" + SRC_FILE_NAME
+	src_content, err := os.ReadFile(src_path)
+	if err != nil {
+		panic(err)
+	}
+	var src_str string = string(src_content)
+	package_info.src_list = strings.Split(src_str, INFO_SEPARATOR)[1:]
+	// 读取inst list
+	var instances []string
+	inst_path := BPF_PACKAGE_HOME + package_name + "/" + INSTANCE_DIR_NAME
+	insts, err := os.ReadDir(inst_path)
+	if err != nil {
+		panic(err)
+	}
+	for _, inst := range insts {
+		instances = append(instances, inst.Name())
+	}
+	package_info.inst_list = instances
+	// 读取data size
+	var size int64 = 0
+	data_dir := BPF_PACKAGE_HOME + package_name + "/" + DATA_DIR_NAME
+	data, err := os.ReadDir(data_dir)
+	if err != nil {
+		panic(err)
+	}
+	for _, item := range data {
+		state, err := os.Stat(data_dir + "/" + item.Name())
+		if err != nil {
+			panic(err)
+		}
+		size += state.Size()
+	}
+	package_info.size = size
+}
+
+func SrcRead(package_name string, src_name string) string {
+	src_path := BPF_PACKAGE_HOME + package_name + "/" + DATA_DIR_NAME + "/" + src_name
+	src_content, err := os.ReadFile(src_path)
+	if err != nil {
+		panic(err)
+	}
+	return string(src_content)
 }

@@ -51,3 +51,33 @@ func InstInfoGetNode(inst_info *InstInfo) string {
 func InstInfoGetSrcList(inst_info *InstInfo) []string {
 	return inst_info.src_list
 }
+
+type PackageInfo struct {
+	package_name string
+	src_list     []string
+	inst_list    []string
+	size         int64
+}
+
+func PackageInfoClear(package_info *PackageInfo) {
+	package_info.package_name = ""
+	package_info.inst_list = nil
+	package_info.src_list = nil
+	package_info.size = 0
+}
+
+func PackageInfoGetPackageName(package_info *PackageInfo) string {
+	return package_info.package_name
+}
+
+func PackageInfoGetSrcList(package_info *PackageInfo) []string {
+	return package_info.src_list
+}
+
+func PackageInfoGetInstList(package_info *PackageInfo) []string {
+	return package_info.inst_list
+}
+
+func PackageInfoGetSize(package_info *PackageInfo) int64 {
+	return package_info.size
+}

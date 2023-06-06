@@ -4,8 +4,6 @@ Copyright © 2023 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"fmt"
-
 	"fudan.edu.cn/swz/bpf/bpf"
 	"fudan.edu.cn/swz/bpf/kube"
 	"github.com/spf13/cobra"
@@ -28,17 +26,16 @@ func (o *LogOptions) Validate(cmd *cobra.Command, args []string) error {
 var logCmd = &cobra.Command{
 	Use:   "log",
 	Short: "log the status of a running bpf",
+	Args:  cobra.MatchAll(cobra.MinimumNArgs(1), cobra.OnlyValidArgs),
 	PreRunE: func(c *cobra.Command, args []string) error {
 		return logOptions.Validate(c, args)
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("log called")
-		fmt.Println(logOptions)
 		inst_name := args[0]
 		if logOptions.flowOption {
-			kube.FllowLog("default", inst_name)
+			kube.FllowLog(bpf.BPF_NAMESPACE, inst_name)
 		} else {
-			kube.GetPodLog("default", inst_name)
+			kube.GetPodLog(bpf.BPF_NAMESPACE, inst_name)
 		}
 	},
 }
