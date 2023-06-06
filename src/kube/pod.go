@@ -107,3 +107,9 @@ func PodRunning(namespace string, name string) bool {
 	pod, _ := clientset.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 	return strings.Compare(string(pod.Status.Phase), "Running") == 0
 }
+
+func PodNode(namespace string, name string) string {
+	clientset := ClientSet()
+	pod, _ := clientset.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+	return pod.Spec.NodeName
+}

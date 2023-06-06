@@ -32,7 +32,7 @@ var listCmd = &cobra.Command{
 		// 获取client set
 		// clientset := kube.ClientSet()
 		// 读取BPF_HOME目录，得到所有的bpf_name
-		fmt.Println("INST\tSTATUS\tCEATTED\tPACKAGE\tSRC_LIST")
+		fmt.Println("INST\tSTATUS\tNODE\tCEATTED\tPACKAGE\tSRC_LIST")
 		insts := bpf.InstList()
 		var inst_info bpf.InstInfo
 		for _, inst_name := range insts {
@@ -42,8 +42,9 @@ var listCmd = &cobra.Command{
 			// 输出
 			status := kube.PodStatus(bpf.BPF_NAMESPACE, inst_name)
 			created := kube.PodCreateTime(bpf.BPF_NAMESPACE, inst_name)
-			fmt.Printf("%s\t %s\t %q\t %q\t %s\n",
-				inst_name, status, created,
+			node := kube.PodNode(bpf.BPF_NAMESPACE, inst_name)
+			fmt.Printf("%s\t %s\t %s\t %q\t %q\t %s\n",
+				inst_name, status, node, created,
 				bpf.InstInfoGetPackageName(&inst_info),
 				bpf.InstInfoGetSrcList(&inst_info),
 			)
