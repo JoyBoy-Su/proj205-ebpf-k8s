@@ -17,10 +17,13 @@ limitations under the License.
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"fudan.edu.cn/swz/bpf/bpf"
+	"fudan.edu.cn/swz/bpf/kube"
 	"github.com/spf13/cobra"
 )
 
@@ -39,37 +42,84 @@ import (
  * 2、去除hard code，且避免job的name重名
  */
 
+func compile(args []string) string {
+	// 获取当前目录，用来挂载到compiler中
+	exePath, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	// 编译
+	return bpf.Compile(bpf.BPF_EMPTY_PACKAGE_NAME, exePath, args)
+}
+
 // runCmd represents the run command
 var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "kubectl run *.bpf.c *.bpf.h",
 	Long:  "kubectl compile *.bpf.c *.bpf.h to pack.json, and run it on one pod",
 	// 最少1个参数，
-	Args: cobra.MatchAll(cobra.MinimumNArgs(1), cobra.OnlyValidArgs),
+	Args: func(cmd *cobra.Command, args []string) error {
+		// 若指定了package直接通过校验
+		package_name, err := cmd.Flags().GetString("package")
+		if err == nil && strings.Compare(package_name, bpf.BPF_EMPTY_PACKAGE_NAME) != 0 {
+			return nil
+		}
+		// 若未指定package则校验args的个数
+		if len(args) < 1 {
+			return errors.New("requires at least one arg to specifies the source code to be compiled")
+		}
+		return nil
+	},
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("run called")
-		// 获取src和name
-		inst_name, err := cmd.Flags().GetString("bpfname")
+		// 获取name
+		inst_name, err := cmd.Flags().GetString("inst")
 		if err != nil {
 			panic(err)
 		}
-		// 获取当前目录，用来挂载到compiler中
-		exePath, err := os.Getwd()
+		// 若未指定package name则重新编译
+		package_name, err := cmd.Flags().GetString("package")
 		if err != nil {
 			panic(err)
 		}
-		// 编译
-		package_name := bpf.Compile(bpf.BPF_EMPTY_PACKAGE_NAME, exePath, args)
-		// 创建configMap，通过cmd的方式
-		bpf.MountPackageByConfigMap(package_name)
+		if strings.Compare(package_name, bpf.BPF_EMPTY_PACKAGE_NAME) == 0 {
+			package_name = compile(args)
+			// 创建configMap
+			bpf.MountPackageByConfigMap(package_name)
+		}
 		// 运行
-		bpf.Run(inst_name, package_name)
+		all, err := cmd.Flags().GetBool("all")
+		if err != nil {
+			panic(err)
+		}
+		node, err := cmd.Flags().GetString("node")
+		if err != nil {
+			panic(err)
+		}
+		if all {
+			// 依次启动
+			for _, node := range kube.LoadNodes() {
+				bpf.Run(inst_name, package_name, node, true)
+			}
+		} else if strings.Compare(node, bpf.BPF_EMPTY_NODE_NAME) != 0 {
+			fmt.Println("node")
+			bpf.Run(inst_name, package_name, node, false)
+		} else {
+			bpf.Run(inst_name, package_name, kube.LoadNodeRandom(), false)
+		}
 		fmt.Println("Bpf program run successfully")
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(runCmd)
-	runCmd.Flags().StringP("bpfname", "m", "default", "name for bpf instance")
-	runCmd.MarkFlagRequired("bpfname")
+	// 指定inst的base name
+	runCmd.Flags().StringP("inst", "i", bpf.BPF_EMPTY_INSTANCE_NAME, "name for bpf instance")
+	// 指定使用的package
+	runCmd.Flags().StringP("package", "p", bpf.BPF_EMPTY_PACKAGE_NAME, "name for bpf package")
+	// 指定是否分发到所有load node
+	runCmd.Flags().BoolP("all", "a", false, "distribute bpf to all load nodes")
+	// 指定是否分发到特定的node
+	runCmd.Flags().StringP("node", "d", bpf.BPF_EMPTY_NODE_NAME, "specifies the node to run")
+	// 分发到所有和特定node不能同时执行
+	runCmd.MarkFlagsMutuallyExclusive("all", "node")
 }

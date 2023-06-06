@@ -105,10 +105,10 @@ func MountPackageByConfigMap(package_name string) {
 	}
 }
 
-// 从package中创建bpf instance
-func Run(inst_name string, package_name string) {
+// 从package中创建bpf instance到指定的node
+func Run(inst_name string, package_name string, node string, serial bool) {
 	// 创建bpf instance
-	inst_name = instanceName(inst_name, false)
+	inst_name = instanceName(inst_name, serial)
 	InstAdd(inst_name, package_name)
 	var hostpathdirectory apiv1.HostPathType = apiv1.HostPathDirectory
 	// 设置runner-pod的资源清单
@@ -123,6 +123,7 @@ func Run(inst_name string, package_name string) {
 			Name: inst_name,
 		},
 		Spec: apiv1.PodSpec{
+			NodeName: node,
 			Containers: []apiv1.Container{
 				{
 					Name:    "bpf-runner",

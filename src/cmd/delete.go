@@ -27,12 +27,13 @@ var deleteCmd = &cobra.Command{
 	Short: "delete bpf by bpfname",
 	Args:  cobra.MatchAll(cobra.MinimumNArgs(1), cobra.OnlyValidArgs),
 	Run: func(cmd *cobra.Command, args []string) {
-		inst_name := args[0]
-		pod_name := inst_name
-		// 不处理异常反而不报错
-		kube.PodDelete(bpf.BPF_NAMESPACE, pod_name)
-		// 删除bpf的管理信息
-		bpf.InstDelete(inst_name)
+		for _, inst_name := range args {
+			pod_name := inst_name
+			// 不处理异常反而不报错
+			kube.PodDelete(bpf.BPF_NAMESPACE, pod_name)
+			// 删除bpf的管理信息
+			bpf.InstDelete(inst_name)
+		}
 	},
 }
 
