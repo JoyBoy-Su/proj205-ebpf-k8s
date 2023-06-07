@@ -653,11 +653,11 @@ Config Map是一种K8S集群中的资源，不是一个运行的实例，可以�
 
 ```bash
 # 目录创建 --from-file=
-$ kubectl create config-map config-map-name --from-file=/doc/file
+$ kubectl create configmap config-map-name --from-file=/doc/file
 # 目录创建出config-map后，config-map中会存在若干对key:value，key为文件名，value为文件内容
 
 # 文件创建 --from-file=
-$ kubectl create config-map config-map-name --from-file=/doc/file/my.properties
+$ kubectl create configmap config-map-name --from-file=/doc/file/my.properties
 # 文件创建出config-map后，config-map中会存在若干对key:value，key为文件名，value为文件内容
 
 # 字面值创建 --from-literal=key=value

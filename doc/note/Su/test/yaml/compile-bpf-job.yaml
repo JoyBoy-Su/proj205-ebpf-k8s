@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: compile-bpf-job
+spec:
+  completions: 1
+  template:
+    metadata:
+      name: compile-bpf
+    spec:
+      restartPolicy: OnFailure
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+      nodeName: master 
+      volumes:
+        - name: bpf-src-volume
+          hostPath:
+            path: /home/ubuntu/jiadisu/bpf		# 从host Path创建pod的共享卷
+            type: Directory
+      containers:
+      - name: compile-bpf
+        image: jiadisu/ecc-min-ubuntu-x86:0.1
+        args: ["opensnoop.bpf.c", "opensnoop.h"]
+        volumeMounts:
+        - name: bpf-src-volume
+          mountPath: /code	    # 将pod的共享卷挂在到docker的code下
