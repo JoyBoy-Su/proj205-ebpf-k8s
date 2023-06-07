@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,8 +15,17 @@ limitations under the License.
 */
 package main
 
-import "fudan.edu.cn/swz/bpf/cmd"
+import (
+	"fmt"
+
+	"fudan.edu.cn/swz/bpf/cmd"
+	"fudan.edu.cn/swz/bpf/kube"
+)
 
 func main() {
+	if !kube.NodeIsMaster() {
+		fmt.Println("The current node is not a control-plane and cannot execute the bpf command")
+		return
+	}
 	cmd.Execute()
 }
